@@ -12,20 +12,23 @@
 
 /* New include */
 #include <rte_arp.h>
+#include <signal.h>
 
-#define BOND_IP_1   192
-#define BOND_IP_2   168
-#define BOND_IP_3   0
-#define BOND_IP_4   10
+/* =========== */
 
 
-/* ========== */
+
 #define RX_RING_SIZE 1024
 #define TX_RING_SIZE 1024
 
 #define NUM_MBUFS 8191
 #define MBUF_CACHE_SIZE 250
 #define BURST_SIZE 32
+
+uint8_t stop = 0;
+int *count;
+void test(int signum);
+
 
 static const struct rte_eth_conf port_conf_default = {
 	.rxmode = {
@@ -56,6 +59,8 @@ port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 		return -1;
 
     /* 將裝置資訊存到 dev_info */
+
+
 	rte_eth_dev_info_get(port, &dev_info);
 	if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_MBUF_FAST_FREE)
 		port_conf.txmode.offloads |=
@@ -112,28 +117,21 @@ port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 
 	return 0;
 }
-static inline size_t
-get_vlan_offset(struct ether_hdr *eth_hdr, uint16_t *proto)
+
+
+void test(int signum)
 {
-    size_t vlan_offset = 0;
-    if (rte_cpu_to_be_16(ETHER_TYPE_VLAN) == *proto) {
-        struct vlan_hdr *vlan_hdr = (struct vlan_hdr *)(eth_hdr + 1);
-        vlan_offset = sizeof(struct vlan_hdr);
-        *proto = vlan_hdr->eth_proto;
-        if (rte_cpu_to_be_16(ETHER_TYPE_VLAN) == *proto) {
-            vlan_hdr = vlan_hdr + 1;
-            *proto = vlan_hdr->eth_proto;
-            vlan_offset += sizeof(struct vlan_hdr);
-        }
-    }
-    return vlan_offset;
+    // Terminate program
+    printf("%d\n", count[0]);
+    exit(signum);
+
 }
 
 /*
  * The lcore main. This is the main thread that does the work, reading from
  * an input port and writing to an output port.
  */
-static __attribute__((noreturn)) void
+static __attribute__(()) int
 lcore_main(void)
 {
 	uint16_t port;
@@ -154,72 +152,59 @@ lcore_main(void)
 
 	/* Run until the application is quit or killed. */
 
+	while (!stop) {
+        signal(SIGINT, test);
 
-    int count = 0;
-	for(;;) {
 		/*
 		 * Receive packets on a port and forward them on the paired
 		 * port. The mapping is 0 -> 1, 1 -> 0, 2 -> 3, 3 -> 2, etc.
 		 */
-        RTE_ETH_FOREACH_DEV(port) {
-            /* Get burst of RX packets, from first port of pair. */
-            struct rte_mbuf *bufs[BURST_SIZE];
-            const uint16_t nb_rx = rte_eth_rx_burst(port, 0, bufs, BURST_SIZE);
+		RTE_ETH_FOREACH_DEV(port) {
 
-            if (unlikely(nb_rx == 0))
-                continue;
+			/* Get burst of RX packets, from first port of pair. */
+			struct rte_mbuf *bufs[BURST_SIZE];
+			const uint16_t nb_rx = rte_eth_rx_burst(port, 0, bufs, BURST_SIZE);
+            
+            count[port] += nb_rx;
+
+			if (unlikely(nb_rx == 0))
+				continue;
+
+            /* Show arp_pkt src_ip & dst_ip */
+
 /*
  *             uint16_t buf;
  *             struct ether_hdr *eth_hdr;
  *             struct arp_hdr *arp_hdr;
- *             uint16_t ether_type, offset;
  *             struct rte_mbuf *m;
  * 
- * 
- *             for (int buf = 0; buf < nb_rx; buf++){
- *                 count++;
+ *             for (int buf = 0; buf < nb_rx; buf++) {
  *                 m = bufs[buf];
  *                 eth_hdr = rte_pktmbuf_mtod(m, struct eth_hdr *);
  *                 arp_hdr = (struct arp_hdr *)(eth_hdr + 1);
  * 
- *                 uint32_t sip = arp_hdr->arp_data.arp_sip;
- *                 uint32_t tip = arp_hdr->arp_data.arp_tip;
+ *                 uint32_t sip =arp_hdr->arp_data.arp_sip;
+ *                 uint32_t tip =arp_hdr->arp_data.arp_tip;
  * 
- *                 printf("Source IP: %u.%u.%u.%u ,  Target IP: %u.%u.%u.%u\n",
- *                         sip & 0xff,
- *                         (sip >> 8) & 0xff,
- *                         (sip >> 16) & 0xff,
- *                         (sip >> 24) & 0xff,
- *                         tip & 0xff,
- *                         (tip >> 8) & 0xff,
- *                         (tip >> 16) & 0xff,
- *                         (tip >> 24 ) & 0xff);
+ *                 prinf("Source IP: %u.%u.%u.%u , Target IP: %u.%u.%u.%u \n"
+ *                        sip & 0xff, 
+ *                        (sip >> 8) & 0xff, 
+ *                        (sip >> 16) & 0xff, 
+ *                        (sip >> 24 & 0xff, 
+ *                        tip & 0xff, 
+ *                        (tip >> 8) & 0xff, 
+ *                        (tip >> 16) & 0xff, 
+ *                        (tip >> 24) & 0xff);
  *             }
  */
 
-            /* Display the MAC addr of source  */
-/*
- *             struct ether_hdr *eth;
- *             struct rte_mbuf *m;
- *             for (int buf = 0; buf < nb_rx; buf++) {
- *                 m = bufs[buf];
- *                 eth = rte_pktmbuf_mtod(m, struct ether_hdr *);
- *                 
- *                 printf("Source %u MAC: %02" PRIx8 " %02" PRIx8 " %02" PRIx8
- *                         " %02" PRIx8 " %02" PRIx8 " %02" PRIx8 "\n",
- *                         port,
- *                         eth->s_addr.addr_bytes[0], eth->s_addr.addr_bytes[1],
- *                         eth->s_addr.addr_bytes[2], eth->s_addr.addr_bytes[3],
- *                         eth->s_addr.addr_bytes[4], eth->s_addr.addr_bytes[5]);
- *             }
- * 
- */
 
 			/* Send burst of TX packets, to second port of pair. 
              * rte_eth_tx_burst(port_id, queue_id, tx_pkts, nb_pkts)
              * Rx->0, Tx->1 ; Rx->2,Tx-3
              */
 			const uint16_t nb_tx = rte_eth_tx_burst(port ^ 1, 0, bufs, nb_rx);
+
 			/* Free any unsent packets. */
 			if (unlikely(nb_tx < nb_rx)) {
 				uint16_t buf;
@@ -227,9 +212,7 @@ lcore_main(void)
 					rte_pktmbuf_free(bufs[buf]);
 			}
 		}
-    
 	}
-	printf("%d\n", count);
 }
 
 /*
@@ -242,7 +225,7 @@ main(int argc, char *argv[])
 	struct rte_mempool *mbuf_pool;
 	unsigned nb_ports;
 	uint16_t portid;
-       
+
 	/* Initialize the Environment Abstraction Layer (EAL). */
 	int ret = rte_eal_init(argc, argv);
 	if (ret < 0)
@@ -277,6 +260,9 @@ main(int argc, char *argv[])
 		printf("\nWARNING: Too many lcores enabled. Only 1 used.\n");
 
 	/* Call lcore_main on the master core only. */
+    count = malloc(nb_ports * sizeof(int));
+    for (int i = 0; i < nb_ports; i++)
+        count[i] = 0;        
 	lcore_main();
 
 	return 0;
