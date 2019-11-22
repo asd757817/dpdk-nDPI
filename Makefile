@@ -1,17 +1,27 @@
-C=gcc
-CXX=g++
-CFLAGS=-g -I$(nDPI_src)/src/include -g -O2
-LIBNDPI=$(nDPI_src)/src/lib/libndpi.a
-LDFLAGS=$(LIBNDPI) -lpcap -lpthread -lm
+#
+# Run 'make -f Makefile.dpdk' to compile the DPDK examples
+#
+# See http://core.dpdk.org/doc/quick-start/ for DPDK installation and setup
+#
+ifeq ($(RTE_SDK),)
+	#$(error "Please define RTE_SDK environment variable")
+	RTE_SDK = $(HOME)/DPDK
+	RTE_TARGET = build
+endif
 
-all: test
+# Default target, can be overridden by command line or environment
+RTE_TARGET ?= x86_64-native-linuxapp-gcc
 
-test: $(LIBNDPI)
-	$(CC) $(CFLAGS) $(OBJS) -o $@ $(LDFLAGS)
+include $(RTE_SDK)/mk/rte.vars.mk
 
-%.o: %.c $(HEADERS) Makefile
-    $(CC) $(CFLAGS) -c $< -o $@
+APP = test
+LIBNDPI = $(nDPI_src)/src/lib/libndpi.a
 
-dpdk:
-	make -f Makefile.dpdk
+SRCS-y := test.c reader_util.c ndpiReader.c
+
+CFLAGS += -g
+CFLAGS += -Wno-strict-prototypes -Wno-missing-prototypes -Wno-missing-declarations -Wno-unused-parameter -I $(nDPI_src)/src/include -g -O2 -DUSE_DPDK
+LDLIBS = $(LIBNDPI) -lpcap -lpthread 
+
+include $(RTE_SDK)/mk/rte.extapp.mk
 

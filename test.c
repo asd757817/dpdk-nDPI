@@ -10,16 +10,18 @@
 #include <rte_lcore.h>
 #include <rte_mbuf.h>
 
-/* New include */
+/*
+ * New include
+ */
 #include <rte_arp.h>
 #include <signal.h>
-
+#include "reader_util.h"
 /* =========== */
 
 
 
-#define RX_RING_SIZE 1024
-#define TX_RING_SIZE 1024
+/* #define RX_RING_SIZE 1024 */
+/* #define TX_RING_SIZE 1024 */
 
 #define NUM_MBUFS 8191
 #define MBUF_CACHE_SIZE 250
@@ -27,7 +29,7 @@
 
 uint8_t stop = 0;
 int *count;
-void test(int signum);
+void sig_handle(int signum);
 
 
 static const struct rte_eth_conf port_conf_default = {
@@ -119,7 +121,7 @@ port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 }
 
 
-void test(int signum)
+void sig_handle(int signum)
 {
     // Terminate program
     printf("%d\n", count[0]);
@@ -153,13 +155,15 @@ lcore_main(void)
 	/* Run until the application is quit or killed. */
 
 	while (!stop) {
-        signal(SIGINT, test);
+        signal(SIGINT, sig_handle);
 
+        printf("%ld\n",  sizeof(struct ndpi_flow_info));
 		/*
 		 * Receive packets on a port and forward them on the paired
 		 * port. The mapping is 0 -> 1, 1 -> 0, 2 -> 3, 3 -> 2, etc.
 		 */
 		RTE_ETH_FOREACH_DEV(port) {
+            
 
 			/* Get burst of RX packets, from first port of pair. */
 			struct rte_mbuf *bufs[BURST_SIZE];
