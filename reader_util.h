@@ -32,7 +32,7 @@
 #include "uthash.h"
 #include <pcap.h>
 #include "ndpi_classify.h"
-#include "ndpi_typedefs.h"
+
 #ifdef USE_DPDK
 #include <rte_eal.h>
 #include <rte_ether.h>
@@ -166,6 +166,7 @@ typedef struct ndpi_flow_info {
   u_int8_t ip_version;
   u_int64_t first_seen, last_seen;
   u_int64_t src2dst_bytes, dst2src_bytes;
+  u_int64_t src2dst_goodput_bytes, dst2src_goodput_bytes;
   u_int32_t src2dst_packets, dst2src_packets;
   u_int32_t has_human_readeable_strings;
   char human_readeable_string_buffer[32];
@@ -200,14 +201,13 @@ typedef struct ndpi_flow_info {
   } http;
   
   struct {
-    char username[32];
+    char username[32], password[32];
   } telnet;
   
   void *src_id, *dst_id;
 
   struct ndpi_entropy entropy;
-  struct ndpi_entropy last_entropy;
-  
+  struct ndpi_entropy last_entropy;  
 } ndpi_flow_info_t;
 
 

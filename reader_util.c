@@ -972,16 +972,19 @@ void process_ndpi_collected_info(struct ndpi_workflow * workflow, struct ndpi_fl
 	  || /* POP */  is_ndpi_proto(flow, NDPI_PROTOCOL_MAIL_POP)
 	  || /* SMTP */ is_ndpi_proto(flow, NDPI_PROTOCOL_MAIL_SMTP)) {
     if(flow->ndpi_flow->protos.ftp_imap_pop_smtp.username[0] != '\0')
-      snprintf(flow->info, sizeof(flow->info), "User: %s][Pwd: %s",
+      snprintf(flow->info, sizeof(flow->info), "User: %s][Pwd: %s%s",
 	       flow->ndpi_flow->protos.ftp_imap_pop_smtp.username,
-	       flow->ndpi_flow->protos.ftp_imap_pop_smtp.password);
+	       flow->ndpi_flow->protos.ftp_imap_pop_smtp.password,
+	       flow->ndpi_flow->protos.ftp_imap_pop_smtp.auth_failed ? "][Auth Failed" : "");
   }
   /* KERBEROS */
   else if(is_ndpi_proto(flow, NDPI_PROTOCOL_KERBEROS)) {
-    if(flow->ndpi_flow->protos.kerberos.cname[0] != '\0') {
-      snprintf(flow->info, sizeof(flow->info), "%s (%s)",
-	       flow->ndpi_flow->protos.kerberos.cname,
-	       flow->ndpi_flow->protos.kerberos.realm);
+    if((flow->ndpi_flow->protos.kerberos.hostname[0] != '\0')
+       || (flow->ndpi_flow->protos.kerberos.username[0] != '\0')) {
+      snprintf(flow->info, sizeof(flow->info), "%s%s (%s)",
+	       flow->ndpi_flow->protos.kerberos.hostname,
+	       flow->ndpi_flow->protos.kerberos.username,
+	       flow->ndpi_flow->protos.kerberos.domain);
     }
   }
   /* HTTP */
@@ -995,6 +998,7 @@ void process_ndpi_collected_info(struct ndpi_workflow * workflow, struct ndpi_fl
     }
   } else if(is_ndpi_proto(flow, NDPI_PROTOCOL_TELNET)) {
     snprintf(flow->telnet.username, sizeof(flow->telnet.username), "%s", flow->ndpi_flow->protos.telnet.username);
+    snprintf(flow->telnet.password, sizeof(flow->telnet.password), "%s", flow->ndpi_flow->protos.telnet.password);
   } else if(is_ndpi_proto(flow, NDPI_PROTOCOL_SSH)) {
     snprintf(flow->ssh_tls.client_info, sizeof(flow->ssh_tls.client_info), "%s",
 	     flow->ndpi_flow->protos.ssh.client_signature);
@@ -1080,7 +1084,7 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow * workflow,
   u_int8_t proto;
   struct ndpi_tcphdr *tcph = NULL;
   struct ndpi_udphdr *udph = NULL;
-  u_int16_t sport, dport, payload_len;
+  u_int16_t sport, dport, payload_len = 0;
   u_int8_t *payload;
   u_int8_t src_to_dst_direction = 1;
   u_int8_t begin_or_end_tcp = 0;
@@ -1136,7 +1140,7 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow * workflow,
       }
 
       ndpi_data_add_value(flow->pktlen_c_to_s, rawsize);
-      flow->src2dst_packets++, flow->src2dst_bytes += rawsize;
+      flow->src2dst_packets++, flow->src2dst_bytes += rawsize, flow->src2dst_goodput_bytes += payload_len;
       memcpy(&flow->entropy.src2dst_last_pkt_time, &when, sizeof(when));
     } else {
       if(flow->entropy.dst2src_last_pkt_time.tv_sec && (!begin_or_end_tcp)) {
@@ -1150,7 +1154,7 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow * workflow,
       }
 
       ndpi_data_add_value(flow->pktlen_s_to_c, rawsize);
-      flow->dst2src_packets++, flow->dst2src_bytes += rawsize;
+      flow->dst2src_packets++, flow->dst2src_bytes += rawsize, flow->dst2src_goodput_bytes += payload_len;
       memcpy(&flow->entropy.dst2src_last_pkt_time, &when, sizeof(when));
     }
 
@@ -1317,7 +1321,7 @@ struct ndpi_proto ndpi_workflow_process_packet(struct ndpi_workflow * workflow,
   u_int64_t time;
   u_int16_t ip_offset = 0, ip_len;
   u_int16_t frag_off = 0, vlan_id = 0;
-  u_int8_t proto = 0;
+  u_int8_t proto = 0, recheck_type;
   /*u_int32_t label;*/
 
   /* counters */
@@ -1445,6 +1449,8 @@ struct ndpi_proto ndpi_workflow_process_packet(struct ndpi_workflow * workflow,
   }
 
 ether_type_check:
+  recheck_type = 0;
+
   /* check ether type */
   switch(type) {
   case VLAN:
@@ -1452,13 +1458,16 @@ ether_type_check:
     type = (packet[ip_offset+2] << 8) + packet[ip_offset+3];
     ip_offset += 4;
     vlan_packet = 1;
+    
     // double tagging for 802.1Q
     while((type == 0x8100) && (ip_offset < header->caplen)) {
       vlan_id = ((packet[ip_offset] << 8) + packet[ip_offset+1]) & 0xFFF;
       type = (packet[ip_offset+2] << 8) + packet[ip_offset+3];
       ip_offset += 4;
     }
+    recheck_type = 1;
     break;
+    
   case MPLS_UNI:
   case MPLS_MULTI:
     mpls.u32 = *((uint32_t *) &packet[ip_offset]);
@@ -1471,16 +1480,23 @@ ether_type_check:
       mpls.u32 = ntohl(mpls.u32);
       ip_offset += 4;
     }
+    recheck_type = 1;
     break;
+    
   case PPPoE:
     workflow->stats.pppoe_count++;
     type = ETH_P_IP;
     ip_offset += 8;
+    recheck_type = 1;
     break;
+    
   default:
     break;
   }
-
+  
+  if(recheck_type)
+    goto ether_type_check;
+    
   workflow->stats.vlan_count += vlan_packet;
 
  iph_check:
@@ -1709,37 +1725,66 @@ static const struct rte_eth_conf port_conf_default = {
 /* ************************************ */
 
 int dpdk_port_init(int port, struct rte_mempool *mbuf_pool) {
-  struct rte_eth_conf port_conf = port_conf_default;
-  const u_int16_t rx_rings = 1, tx_rings = 1;
-  int retval;
-  u_int16_t q;
+    struct rte_eth_conf port_conf = port_conf_default;
+    const u_int16_t rx_rings = 1, tx_rings = 1;
+    uint16_t nb_rxd = RX_RING_SIZE;
+    uint16_t nb_txd = TX_RING_SIZE;
+    
+    struct rte_eth_dev_info dev_info;
+    struct rte_eth_txconf txconf;
+    
+    int retval;
+    u_int16_t q;
 
-  /* 1 RX queue */
-  retval = rte_eth_dev_configure(port, rx_rings, tx_rings, &port_conf);
+    /* Check if the port suppor dpdk */
+    if (!rte_eth_dev_is_valid_port(port))
+        return -1;
 
-  if(retval != 0)
-    return retval;
+    /* 將裝置資訊存到 dev_info */
+    rte_eth_dev_info_get(port, &dev_info);
+    if (dev_info.tx_offload_capa & DEV_TX_OFFLOAD_MBUF_FAST_FREE)
+        port_conf.txmode.offloads |=
+            DEV_TX_OFFLOAD_MBUF_FAST_FREE;
+    /* Configure the Ethernet device. */
+    retval = rte_eth_dev_configure(port, rx_rings, tx_rings, &port_conf);
+    if (retval != 0)
+        return retval;
+    
+    /* Allocate and set up 1 RX queue per Ethernet port. */
+    for (q = 0; q < rx_rings; q++) {
+        retval = rte_eth_rx_queue_setup(port, q, nb_rxd, rte_eth_dev_socket_id(port), NULL, mbuf_pool);
+        if (retval < 0)
+            return retval;
+    }
+    txconf = dev_info.default_txconf;
+    txconf.offloads = port_conf.txmode.offloads;
+    
+    /* Allocate and set up 1 TX queue per Ethernet port. */
+    for (q = 0; q < tx_rings; q++) {
+        retval = rte_eth_tx_queue_setup(port, q, nb_txd,
+                rte_eth_dev_socket_id(port), &txconf);
+        if (retval < 0)
+            return retval;
+    }
 
-  for(q = 0; q < rx_rings; q++) {
-    retval = rte_eth_rx_queue_setup(port, q, RX_RING_SIZE, rte_eth_dev_socket_id(port), NULL, mbuf_pool);
-    if(retval < 0)
-      return retval;
-  }
+    /* Start the Ethernet port. */
+    retval = rte_eth_dev_start(port);
+    if (retval < 0)
+        return retval;
 
-  for(q = 0; q < tx_rings; q++) {
-    retval = rte_eth_tx_queue_setup(port, q, TX_RING_SIZE, rte_eth_dev_socket_id(port), NULL);
-    if(retval < 0)
-      return retval;
-  }
+    /* Display the port MAC address. */
+    struct ether_addr addr;
+    rte_eth_macaddr_get(port, &addr);
+    printf("Port %u MAC: %02" PRIx8 " %02" PRIx8 " %02" PRIx8
+            " %02" PRIx8 " %02" PRIx8 " %02" PRIx8 "\n",
+            port,
+            addr.addr_bytes[0], addr.addr_bytes[1],
+            addr.addr_bytes[2], addr.addr_bytes[3],
+            addr.addr_bytes[4], addr.addr_bytes[5]);
 
-  retval = rte_eth_dev_start(port);
+    /* Enable RX in promiscuous mode for the Ethernet device. */
+    rte_eth_promiscuous_enable(port);
 
-  if(retval < 0)
-    return retval;
-
-  rte_eth_promiscuous_enable(port);
-
-  return 0;
+    return 0;
 }
-
 #endif

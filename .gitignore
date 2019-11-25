@@ -1,3 +1,7 @@
 basicfwd.c
+tmp.c
+test.bk
+ndpi*
+ndpiReader.c 
 /build
 *.swp
