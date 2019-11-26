@@ -17,7 +17,7 @@ include $(RTE_SDK)/mk/rte.vars.mk
 APP = test
 LIBNDPI = $(nDPI_src)/src/lib/libndpi.a
 
-SRCS-y := test.c reader_util.c
+SRCS-y := test.c reader_util.c ndpi_example.c
 
 CFLAGS += -g
 CFLAGS += -Wno-strict-prototypes -Wno-missing-prototypes -Wno-missing-declarations -Wno-unused-parameter -I $(nDPI_src)/src/include -g -O2 -DUSE_DPDK
