@@ -1,5 +1,6 @@
 basicfwd.c
 tmp.c
+fwd_count.c
 test.bk
 ndpiReader*
 api_test*

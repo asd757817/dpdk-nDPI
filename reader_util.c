@@ -1719,7 +1719,7 @@ u_int32_t ethernet_crc32(const void* data, size_t n_bytes) {
 #ifdef USE_DPDK
 
 static const struct rte_eth_conf port_conf_default = {
-						      .rxmode = { .max_rx_pkt_len = ETHER_MAX_LEN }
+						      .rxmode = {  .max_rx_pkt_len = ETHER_MAX_LEN }
 };
 
 /* ************************************ */
