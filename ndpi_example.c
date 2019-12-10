@@ -465,24 +465,19 @@ void * processing_thread(void *_thread_id) {
                     continue;
 
                 /*
-                 * if(num == 0) {
-                 *     usleep(1);
-                 *     continue;
-                 * }
+                 * for(i = 0; i < PREFETCH_OFFSET && i < nb_rx; i++)
+                 *     rte_prefetch0(rte_pktmbuf_mtod(bufs[i], void *));
                  */
-
-                for(i = 0; i < PREFETCH_OFFSET && i < nb_rx; i++)
-                    rte_prefetch0(rte_pktmbuf_mtod(bufs[i], void *));
 
                 for(i = 0; i < nb_rx; i++) {
                     char *data = rte_pktmbuf_mtod(bufs[i], char *);
                     int pkt_len = rte_pktmbuf_pkt_len(bufs[i]);
-                    int data_len = rte_pktmbuf_data_len(bufs[i]);
+                    /* Get pcap format */
                     struct pcap_pkthdr h;
-
                     h.len = h.caplen = pkt_len;
                     gettimeofday(&h.ts, NULL);
 
+                    /* Call the function to process the packets */
                     ndpi_process_packet((u_char*)&thread_id, &h, (const u_char *)data);
                 }
 
