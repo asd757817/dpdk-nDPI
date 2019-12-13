@@ -128,7 +128,7 @@ void ndpi_analyze_payload(struct ndpi_flow_info *flow,
     struct packet_id_stats *p;
 
 #ifdef DEBUG_PAYLOAD
-    for(i=0; i<payload_len; i++)
+    for(int i=0; i<payload_len; i++)
         printf("%c", isprint(payload[i]) ? payload[i] : '.');
     printf("\n");
 #endif
@@ -182,6 +182,7 @@ void ndpi_payload_analyzer(struct ndpi_flow_info *flow,
         u_int8_t src_to_dst_direction,
         u_int8_t *payload, u_int16_t payload_len,
         u_int32_t packet_id) {
+    printf("Call payload_analyzer\n");
     u_int16_t i, j;
     u_int16_t scan_len = ndpi_min(max_packet_payload_dissection, payload_len);
 
@@ -621,6 +622,7 @@ float ndpi_flow_get_byte_count_entropy(const uint32_t byte_count[256],
         }
     }
     return sum / logf(2.0);
+
 }
 
 /* ***************************************************** */
@@ -650,10 +652,10 @@ static struct ndpi_flow_info *get_ndpi_flow_info(struct ndpi_workflow * workflow
     const u_int8_t *l3, *l4;
     u_int32_t l4_data_len = 0XFEEDFACE;
 
-    /*
-Note: to keep things simple (ndpiReader is just a demo app)
-we handle IPv6 a-la-IPv4.
-*/
+/*
+ * Note: to keep things simple (ndpiReader is just a demo app)
+ * we handle IPv6 and IPv4.
+ */
     if(version == IPVERSION) {
         if(ipsize < 20)
             return NULL;
@@ -661,7 +663,11 @@ we handle IPv6 a-la-IPv4.
         if((iph->ihl * 4) > ipsize || ipsize < ntohs(iph->tot_len)
                 /* || (iph->frag_off & htons(0x1FFF)) != 0 */)
             return NULL;
-
+        /*
+         * IPv4 Internet Header Length(IHL)
+         * Use 4 bits to specify the # of 32-bit words in header
+         * So multiply the value by 4 to represent the # of byte
+         */
         l4_offset = iph->ihl * 4;
         l3 = (const u_int8_t*)iph;
     } else {
@@ -670,7 +676,7 @@ we handle IPv6 a-la-IPv4.
     }
 
     *proto = iph->protocol;
-
+    /* Count the amount of packets with different size */
     if(l4_packet_len < 64)
         workflow->stats.packet_len[0]++;
     else if(l4_packet_len >= 64 && l4_packet_len < 128)
@@ -684,9 +690,11 @@ we handle IPv6 a-la-IPv4.
     else if(l4_packet_len >= 1500)
         workflow->stats.packet_len[5]++;
 
+    /* Calculate the max size of packets */
     if(l4_packet_len > workflow->stats.max_packet_len)
         workflow->stats.max_packet_len = l4_packet_len;
 
+    /* Get the ptr to L4 hdr */
     l4 = ((const u_int8_t *) l3 + l4_offset);
 
     if(*proto == IPPROTO_TCP && l4_packet_len >= sizeof(struct ndpi_tcphdr)) {
@@ -709,6 +717,7 @@ we handle IPv6 a-la-IPv4.
         *payload_len = (l4_packet_len > sizeof(struct ndpi_udphdr)) ? l4_packet_len-sizeof(struct ndpi_udphdr) : 0;
         l4_data_len = l4_packet_len - sizeof(struct ndpi_udphdr);
     } else if(*proto == IPPROTO_ICMP) {
+        // ICMP
         *payload = (u_int8_t*)&l4[sizeof(struct ndpi_icmphdr )];
         *payload_len = (l4_packet_len > sizeof(struct ndpi_icmphdr)) ? l4_packet_len-sizeof(struct ndpi_icmphdr) : 0;
         l4_data_len = l4_packet_len - sizeof(struct ndpi_icmphdr);
@@ -723,7 +732,11 @@ we handle IPv6 a-la-IPv4.
         *sport = *dport = 0;
         l4_data_len = 0;
     }
-
+    
+    /*
+     * Update flow info
+     * assign packet protocol, vlan_id, src_ip, ... to flow
+     */
     flow.protocol = iph->protocol, flow.vlan_id = vlan_id;
     flow.src_ip = iph->saddr, flow.dst_ip = iph->daddr;
     flow.src_port = htons(*sport), flow.dst_port = htons(*dport);
@@ -737,7 +750,10 @@ we handle IPv6 a-la-IPv4.
     idx = hashval % workflow->prefs.num_roots;
     ret = ndpi_tfind(&flow, &workflow->ndpi_flows_root[idx], ndpi_workflow_node_cmp);
 
-    /* to avoid two nodes in one binary tree for a flow */
+    /*
+     * to avoid two nodes in one binary tree for a flow
+     * exchange src and dst then search again
+     */
     int is_changed = 0;
     if(ret == NULL) {
         u_int32_t orig_src_ip = flow.src_ip;
@@ -756,6 +772,7 @@ we handle IPv6 a-la-IPv4.
     }
 
     if(ret == NULL) {
+
         if(workflow->stats.ndpi_flow_count == workflow->prefs.max_ndpi_flows) {
             NDPI_LOG(0, workflow->ndpi_struct, NDPI_LOG_ERROR,
                     "maximum flow count (%u) has been exceeded\n",
@@ -1089,7 +1106,8 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow * workflow,
     u_int8_t src_to_dst_direction = 1;
     u_int8_t begin_or_end_tcp = 0;
     struct ndpi_proto nproto = { NDPI_PROTOCOL_UNKNOWN, NDPI_PROTOCOL_UNKNOWN };
-
+    
+    /* IPv4 */
     if(iph)
         flow = get_ndpi_flow_info(workflow, IPVERSION, vlan_id,
                 tunnel_type, iph, NULL,
@@ -1098,16 +1116,17 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow * workflow,
                 &tcph, &udph, &sport, &dport,
                 &src, &dst, &proto,
                 &payload, &payload_len, &src_to_dst_direction, when);
+    /* IPv6 */
     else
         flow = get_ndpi_flow_info6(workflow, vlan_id,
                 tunnel_type, iph6, ip_offset,
                 &tcph, &udph, &sport, &dport,
                 &src, &dst, &proto,
                 &payload, &payload_len, &src_to_dst_direction, when);
-
+	
     if(flow != NULL) {
         struct timeval tdiff;
-
+        
         workflow->stats.ip_packet_count++;
         workflow->stats.total_wire_bytes += rawsize + 24 /* CRC etc */,
             workflow->stats.total_ip_bytes += rawsize;
@@ -1157,6 +1176,7 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow * workflow,
             flow->dst2src_packets++, flow->dst2src_bytes += rawsize, flow->dst2src_goodput_bytes += payload_len;
             memcpy(&flow->entropy.dst2src_last_pkt_time, &when, sizeof(when));
         }
+
 
         if(enable_payload_analyzer && (payload_len > 0))
             ndpi_payload_analyzer(flow, src_to_dst_direction,
@@ -1218,7 +1238,9 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow * workflow,
                             sizeof(flow->human_readeable_string_buffer)) == 1)
                     flow->has_human_readeable_strings = 1;
             }
-        } else {
+        } 
+        /* Packets have been encrypted */
+        else {
             if((proto == IPPROTO_TCP)
                     && (
                         is_ndpi_proto(flow, NDPI_PROTOCOL_TLS)
@@ -1238,27 +1260,17 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow * workflow,
             (((proto == IPPROTO_UDP) && ((flow->src2dst_packets + flow->dst2src_packets) > max_num_udp_dissected_pkts))
              || ((proto == IPPROTO_TCP) && ((flow->src2dst_packets + flow->dst2src_packets) > max_num_tcp_dissected_pkts))) ? 1 : 0;
 
-#if 0
-        printf("%s()\n", __FUNCTION__);  
-#endif
-
-        flow->detected_protocol = ndpi_detection_process_packet(workflow->ndpi_struct, ndpi_flow,
-                iph ? (uint8_t *)iph : (uint8_t *)iph6,
-                ipsize, time, src, dst);
+        /* Detect the protocol */
+		flow->detected_protocol = ndpi_detection_process_packet(workflow->ndpi_struct, ndpi_flow,
+				iph ? (uint8_t *)iph : (uint8_t *)iph6,
+				ipsize, time, src, dst);
 
         if(enough_packets || (flow->detected_protocol.app_protocol != NDPI_PROTOCOL_UNKNOWN)) {
-            if((!enough_packets)
-                    && ndpi_extra_dissection_possible(workflow->ndpi_struct, ndpi_flow))
+            if((!enough_packets) && ndpi_extra_dissection_possible(workflow->ndpi_struct, ndpi_flow))
                 ; /* Wait for certificate fingerprint */
             else {
                 /* New protocol detected or give up */
                 flow->detection_completed = 1;
-
-#if 0
-                /* Check if we should keep checking extra packets */
-                if(ndpi_flow && ndpi_flow->check_extra_packets)
-                    flow->check_extra_packets = 1;
-#endif
 
                 if(flow->detected_protocol.app_protocol == NDPI_PROTOCOL_UNKNOWN) {
                     u_int8_t proto_guessed;
@@ -1271,7 +1283,7 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow * workflow,
             }
         }
     }
-
+    
     return(flow->detected_protocol);
 }
 
@@ -1569,7 +1581,11 @@ v4_warning:
         workflow->stats.total_discarded_bytes +=  header->len;
         return(nproto);
     }
-
+    
+    /*
+     * decode_tunnels default is 0
+     * User can set this by option -t
+     */
     if(workflow->prefs.decode_tunnels && (proto == IPPROTO_UDP)) {
         struct ndpi_udphdr *udp = (struct ndpi_udphdr *)&packet[ip_offset+ip_len];
         u_int16_t sport = ntohs(udp->source), dport = ntohs(udp->dest);

@@ -564,7 +564,7 @@ static void parseOptions(int argc, char **argv) {
                 break;
 
             case 'n':
-                
+
                 num_threads = atoi(optarg);
                 printf("nb_thread = %d \n", num_threads);
                 break;
@@ -889,6 +889,7 @@ static void printFlow(u_int16_t id, struct ndpi_flow_info *flow, u_int16_t threa
     fprintf(out, "\t%u(%u)", id, flow->flow_id);
 #endif
 
+    /* Show L4 protocol (TCP, UDP, ICMP, IGMP, ...) */
     fprintf(out, "\t%s ", ipProto2Name(flow->protocol));
 
     fprintf(out, "%s%s%s:%u %s %s%s%s:%u ",
@@ -909,7 +910,9 @@ static void printFlow(u_int16_t id, struct ndpi_flow_info *flow, u_int16_t threa
         fprintf(out, "[score: %.4f]", flow->entropy.score);
     }
 
+    /* Show app protocol(HTTP, ...) */
     fprintf(out, "[proto: ");
+
     if(flow->tunnel_type != ndpi_no_tunnel)
         fprintf(out, "%s:", ndpi_tunnel2str(flow->tunnel_type));
 
@@ -1364,7 +1367,7 @@ static void node_idle_scan_walker(const void *node, ndpi_VISIT which, int depth,
 }
 
 /*
- * brief Setup for detection begin
+ * Setup for detection begin
  */
 static void setupDetection(u_int16_t thread_id, pcap_t * pcap_handle) {
     NDPI_PROTOCOL_BITMASK all;
@@ -1888,6 +1891,7 @@ static void printResults(u_int64_t processing_time_usec, u_int64_t setup_time_us
     if(cumulative_stats.total_wire_bytes == 0)
         goto free_stats;
 
+    /* Show monitor statistics */
     if(!quiet_mode) {
         printf("\nnDPI Memory statistics:\n");
         printf("\tnDPI Memory (once):      %-13s\n", formatBytes(ndpi_get_ndpi_detection_module_size(), buf, sizeof(buf)));
@@ -1979,6 +1983,7 @@ static void printResults(u_int64_t processing_time_usec, u_int64_t setup_time_us
         }
     }
 
+    /* Show detected protocol statistics */
     if((!quiet_mode)) {
         printf("\n\nProtocol statistics:\n");
 
@@ -2103,9 +2108,9 @@ static void ndpi_process_packet(u_char *args,
 
     memcpy(packet_checked, packet, header->caplen);
 
-    /* Judge the protocol used by the packet */
+    /* Check the protocol used by the packet */
     p = ndpi_workflow_process_packet(ndpi_thread_info[thread_id].workflow, header, packet_checked);
-    
+
     /* record the time */
     if(!pcap_start.tv_sec) pcap_start.tv_sec = header->ts.tv_sec, pcap_start.tv_usec = header->ts.tv_usec;
     pcap_end.tv_sec = header->ts.tv_sec, pcap_end.tv_usec = header->ts.tv_usec;

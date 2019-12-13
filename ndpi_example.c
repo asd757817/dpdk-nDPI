@@ -37,12 +37,6 @@ u_int8_t num_threads = 1;
 struct port_stats *srcStats = NULL, *dstStats = NULL; 
 struct receiver *receivers = NULL, *topReceivers = NULL;
 
-/* u_int32_t current_ndpi_memory = 0, max_ndpi_memory = 0;  */
-/*
- * #ifdef USE_DPDK
- * int dpdk_port_id = 0, dpdk_run_capture = 1, sig_called = 0;
- * #endif
- */
 #ifdef DEBUG_TRACE
 FILE *trace = NULL;
 #endif
@@ -51,7 +45,11 @@ FILE *trace = NULL;
 void sigproc(int sig) {
     int thread_id;
 
-    if(sig_called) return; else sig_called = 1;
+    if(sig_called) 
+        return; 
+    else 
+        sig_called = 1;
+
     shutdown_app = 1;
 
     for(thread_id=0; thread_id<num_threads; thread_id++)
@@ -434,63 +432,66 @@ void * processing_thread(void *_thread_id) {
     long thread_id = (long) _thread_id;
     char pcap_error_buffer[PCAP_ERRBUF_SIZE];
 
-/*
- * #if defined(linux) && defined(HAVE_PTHREAD_SETAFFINITY_NP)
- *     if(core_affinity[thread_id] >= 0) {
- *         cpu_set_t cpuset;
- * 
- *         CPU_ZERO(&cpuset);
- *         CPU_SET(core_affinity[thread_id], &cpuset);
- * 
- *         if(pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset) != 0)
- *             fprintf(stderr, "Error while binding thread %ld to core %d\n", thread_id, core_affinity[thread_id]);
- *         else {
- *             if((!quiet_mode)) printf("Running thread %ld on core %d...\n", thread_id, core_affinity[thread_id]);
- *         }
- *     } else
- * #endif
- */
+    /* Set core affinity (bind thread on one core) */
+#if defined(linux) && defined(HAVE_PTHREAD_SETAFFINITY_NP)
+    if(core_affinity[thread_id] >= 0) {
+        cpu_set_t cpuset;
+
+        CPU_ZERO(&cpuset);
+        CPU_SET(core_affinity[thread_id], &cpuset);
+
+        if(pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset) != 0)
+            fprintf(stderr, "Error while binding thread %ld to core %d\n", thread_id, core_affinity[thread_id]);
+        else {
+            if((!quiet_mode)) printf("Running thread %ld on core %d...\n", thread_id, core_affinity[thread_id]);
+        }
+    } else
+#endif
+
+
         if((!quiet_mode)) printf("Running thread %ld...\n", thread_id);
 
-#ifdef USE_DPDK
-            
-        while(dpdk_run_capture) {
+#ifdef USE_DPDK        
+    while(dpdk_run_capture) {
+        /* Receive packets from each port */
+        RTE_ETH_FOREACH_DEV(dpdk_port_id){
+            struct rte_mbuf *bufs[BURST_SIZE];
+            u_int16_t nb_rx = rte_eth_rx_burst(dpdk_port_id, 0, bufs, BURST_SIZE);
+            u_int i;
 
-            RTE_ETH_FOREACH_DEV(dpdk_port_id){
-                struct rte_mbuf *bufs[BURST_SIZE];
-                u_int16_t nb_rx = rte_eth_rx_burst(dpdk_port_id, 0, bufs, BURST_SIZE);
-                u_int i;
+            if (unlikely(nb_rx == 0))
+                continue;
 
-                if (unlikely(nb_rx == 0))
-                    continue;
 
-                /*
-                 * for(i = 0; i < PREFETCH_OFFSET && i < nb_rx; i++)
-                 *     rte_prefetch0(rte_pktmbuf_mtod(bufs[i], void *));
-                 */
+            /* for(i = 0; i < PREFETCH_OFFSET && i < nb_rx; i++)
+               rte_prefetch0(rte_pktmbuf_mtod(bufs[i], void *)); */
 
-                for(i = 0; i < nb_rx; i++) {
-                    char *data = rte_pktmbuf_mtod(bufs[i], char *);
-                    int pkt_len = rte_pktmbuf_pkt_len(bufs[i]);
-                    /* Get pcap format */
-                    struct pcap_pkthdr h;
-                    h.len = h.caplen = pkt_len;
-                    gettimeofday(&h.ts, NULL);
+            /*
+             * When receive packets, create pcap header
+             * then process the packe
+             */
+            for(i = 0; i < nb_rx; i++) {
+                char *data = rte_pktmbuf_mtod(bufs[i], char *);
+                int pkt_len = rte_pktmbuf_pkt_len(bufs[i]);
+                /* Get pcap format */
+                struct pcap_pkthdr h;
+                h.len = h.caplen = pkt_len;
+                gettimeofday(&h.ts, NULL);
 
-                    /* Call the function to process the packets */
-                    ndpi_process_packet((u_char*)&thread_id, &h, (const u_char *)data);
-                }
+                /* Call the function to process the packets */
+                ndpi_process_packet((u_char*)&thread_id, &h, (const u_char *)data);
+            }
 
-                /* Send burst of TX packets, to second port of pair. */
-                const uint16_t nb_tx = rte_eth_tx_burst(dpdk_port_id^1, 0, bufs, nb_rx);
+            /* Send burst of TX packets, to second port of pair. */
+            const uint16_t nb_tx = rte_eth_tx_burst(dpdk_port_id^1, 0, bufs, nb_rx);
 
-                /* Free any unsent packets. */
-                if (unlikely(nb_tx < nb_rx)) {
-                    for (i = nb_tx; i < nb_rx; i++)
-                        rte_pktmbuf_free(bufs[i]);
-                }
+            /* Free any unsent packets. */
+            if (unlikely(nb_tx < nb_rx)) {
+                for (i = nb_tx; i < nb_rx; i++)
+                    rte_pktmbuf_free(bufs[i]);
             }
         }
+    }
 #else
 pcap_loop:
     runPcapLoop(thread_id);
@@ -542,6 +543,7 @@ void test_lib() {
     for(thread_id = 0; thread_id < num_threads; thread_id++) {
         printf("Create thread %ld\n", thread_id);
 
+        /* Create pthread */
         status = pthread_create(&ndpi_thread_info[thread_id].pthread, NULL, processing_thread, (void *) thread_id);
         /* check pthreade_create return value */
         if(status != 0) {

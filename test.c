@@ -83,11 +83,11 @@ int main(int argc, char **argv) {
     for(i=0; i<num_loops; i++)
         test_lib();
 
-    if(results_path)  free(results_path);
+    /* if(results_path)  free(results_path);
     if(results_file)  fclose(results_file);
     if(extcap_dumper) pcap_dump_close(extcap_dumper);
     if(ndpi_info_mod) ndpi_exit_detection_module(ndpi_info_mod);
-    if(csv_fp)        fclose(csv_fp);
+    if(csv_fp)        fclose(csv_fp); */
 
     return 0;
 }
