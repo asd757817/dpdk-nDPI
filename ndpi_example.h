@@ -2111,6 +2111,8 @@ static void ndpi_process_packet(u_char *args,
     /* Check the protocol used by the packet */
     p = ndpi_workflow_process_packet(ndpi_thread_info[thread_id].workflow, header, packet_checked);
 
+    /* printf("%d %d\n", p.master_protocol, p.app_protocol); */
+
     /* record the time */
     if(!pcap_start.tv_sec) pcap_start.tv_sec = header->ts.tv_sec, pcap_start.tv_usec = header->ts.tv_usec;
     pcap_end.tv_sec = header->ts.tv_sec, pcap_end.tv_usec = header->ts.tv_usec;

@@ -652,10 +652,10 @@ static struct ndpi_flow_info *get_ndpi_flow_info(struct ndpi_workflow * workflow
     const u_int8_t *l3, *l4;
     u_int32_t l4_data_len = 0XFEEDFACE;
 
-/*
- * Note: to keep things simple (ndpiReader is just a demo app)
- * we handle IPv6 and IPv4.
- */
+    /*
+     * Note: to keep things simple (ndpiReader is just a demo app)
+     * we handle IPv6 and IPv4.
+     */
     if(version == IPVERSION) {
         if(ipsize < 20)
             return NULL;
@@ -732,10 +732,10 @@ static struct ndpi_flow_info *get_ndpi_flow_info(struct ndpi_workflow * workflow
         *sport = *dport = 0;
         l4_data_len = 0;
     }
-    
+
     /*
      * Update flow info
-     * assign packet protocol, vlan_id, src_ip, ... to flow
+     * Assign packet protocol, vlan_id, src_ip, ... to flow
      */
     flow.protocol = iph->protocol, flow.vlan_id = vlan_id;
     flow.src_ip = iph->saddr, flow.dst_ip = iph->daddr;
@@ -751,8 +751,8 @@ static struct ndpi_flow_info *get_ndpi_flow_info(struct ndpi_workflow * workflow
     ret = ndpi_tfind(&flow, &workflow->ndpi_flows_root[idx], ndpi_workflow_node_cmp);
 
     /*
-     * to avoid two nodes in one binary tree for a flow
-     * exchange src and dst then search again
+     * To avoid two nodes in one binary tree for a flow
+     * Exchange src and dst then search again
      */
     int is_changed = 0;
     if(ret == NULL) {
@@ -767,12 +767,9 @@ static struct ndpi_flow_info *get_ndpi_flow_info(struct ndpi_workflow * workflow
         flow.dst_port = orig_src_port;
 
         is_changed = 1;
-
         ret = ndpi_tfind(&flow, &workflow->ndpi_flows_root[idx], ndpi_workflow_node_cmp);
     }
-
     if(ret == NULL) {
-
         if(workflow->stats.ndpi_flow_count == workflow->prefs.max_ndpi_flows) {
             NDPI_LOG(0, workflow->ndpi_struct, NDPI_LOG_ERROR,
                     "maximum flow count (%u) has been exceeded\n",
@@ -1106,7 +1103,11 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow * workflow,
     u_int8_t src_to_dst_direction = 1;
     u_int8_t begin_or_end_tcp = 0;
     struct ndpi_proto nproto = { NDPI_PROTOCOL_UNKNOWN, NDPI_PROTOCOL_UNKNOWN };
-    
+
+    /*
+     * Call get_ndpi_flow_info() function to parse the packet info and update flow statistics.
+     */
+
     /* IPv4 */
     if(iph)
         flow = get_ndpi_flow_info(workflow, IPVERSION, vlan_id,
@@ -1123,13 +1124,41 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow * workflow,
                 &tcph, &udph, &sport, &dport,
                 &src, &dst, &proto,
                 &payload, &payload_len, &src_to_dst_direction, when);
-	
+
+    /************  Payload pattern matching  ************/
+    
+    void *test_automa;
+    test_automa = ndpi_init_automa();
+
+    /* Add string to automata */
+    if(ndpi_add_string_to_automa(test_automa, "Spot")==1)
+        printf("Add string to automa error\n");
+    
+    ndpi_finalize_automa(test_automa);
+
+    char *buf;
+    buf = malloc(payload_len*sizeof(char));
+    memset(buf, '\0', payload_len);
+
+    char *tmp = (char *)payload;
+    strncpy(buf, tmp, payload_len); 
+
+    if(ndpi_match_string(test_automa, payload)==1){
+        printf("Detect a malicious packet\n");
+        printf("%d %d\n",iph->saddr, iph->daddr);
+    }
+
+
+
+
+    /****************************************************/
+
     if(flow != NULL) {
         struct timeval tdiff;
-        
+
         workflow->stats.ip_packet_count++;
-        workflow->stats.total_wire_bytes += rawsize + 24 /* CRC etc */,
-            workflow->stats.total_ip_bytes += rawsize;
+        workflow->stats.total_wire_bytes += rawsize + 24; /* CRC etc */
+        workflow->stats.total_ip_bytes += rawsize;
         ndpi_flow = flow->ndpi_flow;
 
         if((tcph != NULL) && (tcph->fin || tcph->rst || tcph->syn))
@@ -1261,9 +1290,10 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow * workflow,
              || ((proto == IPPROTO_TCP) && ((flow->src2dst_packets + flow->dst2src_packets) > max_num_tcp_dissected_pkts))) ? 1 : 0;
 
         /* Detect the protocol */
-		flow->detected_protocol = ndpi_detection_process_packet(workflow->ndpi_struct, ndpi_flow,
-				iph ? (uint8_t *)iph : (uint8_t *)iph6,
-				ipsize, time, src, dst);
+        
+        flow->detected_protocol = ndpi_detection_process_packet(workflow->ndpi_struct, ndpi_flow,
+                iph ? (uint8_t *)iph : (uint8_t *)iph6,
+                ipsize, time, src, dst);
 
         if(enough_packets || (flow->detected_protocol.app_protocol != NDPI_PROTOCOL_UNKNOWN)) {
             if((!enough_packets) && ndpi_extra_dissection_possible(workflow->ndpi_struct, ndpi_flow))
@@ -1283,7 +1313,7 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow * workflow,
             }
         }
     }
-    
+
     return(flow->detected_protocol);
 }
 
@@ -1581,7 +1611,7 @@ v4_warning:
         workflow->stats.total_discarded_bytes +=  header->len;
         return(nproto);
     }
-    
+
     /*
      * decode_tunnels default is 0
      * User can set this by option -t
@@ -1677,7 +1707,6 @@ v4_warning:
             }
         }
     }
-
     /* process the packet */
     return(packet_processing(workflow, time, vlan_id, tunnel_type, iph, iph6,
                 ip_offset, header->caplen - ip_offset,

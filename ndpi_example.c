@@ -462,7 +462,7 @@ void * processing_thread(void *_thread_id) {
             if (unlikely(nb_rx == 0))
                 continue;
 
-
+            
             /* for(i = 0; i < PREFETCH_OFFSET && i < nb_rx; i++)
                rte_prefetch0(rte_pktmbuf_mtod(bufs[i], void *)); */
 
