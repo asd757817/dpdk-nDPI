@@ -83,7 +83,8 @@ extern int dpdk_port_init(int port, struct rte_mempool *mbuf_pool);
 #define MAX_TABLE_SIZE_2         8192
 #define INIT_VAL                   -1
 
-
+uint8_t to_be_transfered;
+void set_transfer(int i);
 // inner hash table (ja3 -> security state)
 typedef struct ndpi_ja3_info {
     char * ja3;
@@ -264,17 +265,16 @@ typedef struct ndpi_workflow {
 } ndpi_workflow_t;
 
 
-/* Pattern(s) matching */
-
+/**** Pattern(s) matching ****/
 // Store all pattern matching automata
 struct pattern_matching_automa{
     void *automa[2];
+    uint32_t malicious_packet_count[2];
 };
-
 struct pattern_matching_automa *pattern_match;
+void init_pattern_matching();
 
-int init_pattern_matching();
-/**********************/
+/*****************************/
 
 
 /* TODO: remove wrappers parameters and use ndpi global, when their initialization will be fixed... */

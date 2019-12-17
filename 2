@@ -118,53 +118,6 @@ u_int16_t max_pattern_len = 8;
 
 /* *********************************************************** */
 
-
-/* ****** Pattern matching ***** */
-
-/*
- * Automata initialize
- */
-void init_pattern_matching(){
-    /* Allocate memory and initialize automata */
-    pattern_match = malloc(sizeof(struct pattern_matching_automa));
-
-    // 0 for http, 1 for ... , 2 ... To be done.
-    // Use http for demo.
-    pattern_match->automa[0] = ndpi_init_automa();
-
-    /* Read pattern file and add into automata */
-    int check; char *buf; size_t len=0;
-    FILE *fd = fopen("patterns.txt", "r");
-    if(fd){
-        while(getline(&buf, &len, fd) != -1 ){
-            buf = strtok(buf, "\n");
-            check = ndpi_add_string_to_automa(pattern_match->automa[0], buf);
-            if(check)
-                printf("Add pattern error.\n");
-        }
-        fclose(fd);
-    }
-    else
-        printf("Read pattern file error.\n");
-
-    /* Finalize */
-    ndpi_finalize_automa(pattern_match->automa[0]);
-}
-
-/*
- * Search for pattern(s) in payload
- */
-static int
-search_for_pattern(int proto_id, uint8_t *payload){
-    /* Search for pattern(s) and record */
-    if(ndpi_match_string(pattern_match->automa[proto_id], payload)==1){
-        return 0;
-    }
-    else
-        return 1;
-}
-
-/* *********************************************************** */
 void ndpi_analyze_payload(struct ndpi_flow_info *flow,
         u_int8_t src_to_dst_direction,
         u_int8_t *payload,
@@ -794,17 +747,8 @@ static struct ndpi_flow_info *get_ndpi_flow_info(struct ndpi_workflow * workflow
             flow.src_ip, flow.src_port, flow.dst_ip, flow.dst_port);
 #endif
 
-
     idx = hashval % workflow->prefs.num_roots;
     ret = ndpi_tfind(&flow, &workflow->ndpi_flows_root[idx], ndpi_workflow_node_cmp);
-
-    to_be_transfered = search_for_pattern(0, *payload);
-    /* Pattern matching alert */
-    if(!to_be_transfered){
-        printf("\nReceive a packet containing malicious payload and the payload is:\n");
-        printf("%s\n", *payload);
-        printf("//=================================//\n");
-    }
 
     /*
      * To avoid two nodes in one binary tree for a flow
@@ -1117,6 +1061,47 @@ void process_ndpi_collected_info(struct ndpi_workflow * workflow, struct ndpi_fl
 }
 
 
+/* ****** Pattern matching ***** */
+
+/*
+ * Automata initialize
+ */
+void init_pattern_matching(){
+    /* Allocate memory and initialize automata */
+    pattern_match = malloc(sizeof(struct pattern_matching_automa));
+    // 0 for http
+    pattern_match->automa[0] = ndpi_init_automa();
+    
+    /* Read pattern file and add into automata */
+    int check; char *buf; size_t len=0;
+    FILE *fd = fopen("patterns.txt", "r");
+    if(fd){
+        while(getline(&buf, &len, fd) != -1 ){
+            buf = strtok(buf, "\n");
+            check = ndpi_add_string_to_automa(pattern_match->automa[0], buf);
+            if(check)
+                printf("Add pattern error.\n");
+        }
+        fclose(fd);
+    }
+    else
+        printf("Read pattern file error.\n");
+
+    /* Finalize */
+    ndpi_finalize_automa(pattern_match->automa[0]);
+}
+
+/*
+ * Search for pattern(s) in payload
+ */
+static void
+search_for_pattern(int db_id, uint8_t *payload){
+    /* Search for pattern(s) and record */
+    if(ndpi_match_string(pattern_match->automa[db_id], payload)==1){
+        printf("Detect a malicious packet\n");
+    }
+}
+
 /* ****************************************************** */
 
 /**
@@ -1148,7 +1133,7 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow * workflow,
         u_int16_t ipsize, u_int16_t rawsize,
         const struct pcap_pkthdr *header,
         const u_char *packet,
-        struct timeval when){
+        struct timeval when) {
     struct ndpi_id_struct *src, *dst;
     struct ndpi_flow_info *flow = NULL;
     struct ndpi_flow_struct *ndpi_flow = NULL;
@@ -1181,9 +1166,7 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow * workflow,
                 &tcph, &udph, &sport, &dport,
                 &src, &dst, &proto,
                 &payload, &payload_len, &src_to_dst_direction, when);
-
-
-
+    
     if(flow != NULL) {
         struct timeval tdiff;
 
@@ -1322,7 +1305,7 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow * workflow,
              || ((proto == IPPROTO_TCP) && ((flow->src2dst_packets + flow->dst2src_packets) > max_num_tcp_dissected_pkts))) ? 1 : 0;
 
         /* Detect the protocol */
-
+        
         flow->detected_protocol = ndpi_detection_process_packet(workflow->ndpi_struct, ndpi_flow,
                 iph ? (uint8_t *)iph : (uint8_t *)iph6,
                 ipsize, time, src, dst);
@@ -1353,7 +1336,7 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow * workflow,
 
 struct ndpi_proto ndpi_workflow_process_packet(struct ndpi_workflow * workflow,
         const struct pcap_pkthdr *header,
-        const u_char *packet){
+        const u_char *packet) {
     /*
      * Declare pointers to packet headers
      */

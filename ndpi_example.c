@@ -462,7 +462,7 @@ void * processing_thread(void *_thread_id) {
             if (unlikely(nb_rx == 0))
                 continue;
 
-            
+
             /* for(i = 0; i < PREFETCH_OFFSET && i < nb_rx; i++)
                rte_prefetch0(rte_pktmbuf_mtod(bufs[i], void *)); */
 
@@ -478,22 +478,44 @@ void * processing_thread(void *_thread_id) {
                 h.len = h.caplen = pkt_len;
                 gettimeofday(&h.ts, NULL);
 
+                to_be_transfered = 1;
                 /* Call the function to process the packets */
                 ndpi_process_packet((u_char*)&thread_id, &h, (const u_char *)data);
             }
 
             /* Send burst of TX packets, to second port of pair. */
             const uint16_t nb_tx = rte_eth_tx_burst(dpdk_port_id^1, 0, bufs, nb_rx);
-
             /* Free any unsent packets. */
+
             if (unlikely(nb_tx < nb_rx)) {
                 for (i = nb_tx; i < nb_rx; i++)
                     rte_pktmbuf_free(bufs[i]);
             }
+
+            /*
+             * if(to_be_transfered){
+             *     const uint16_t nb_tx = rte_eth_tx_burst(dpdk_port_id^1, 0, bufs, nb_rx);
+             *     [> Free any unsent packets. <]
+             *     if (unlikely(nb_tx < nb_rx)) {
+             *         for (i = nb_tx; i < nb_rx; i++)
+             *             rte_pktmbuf_free(bufs[i]);
+             *     }
+             * }
+             * else{
+             *     printf("Block the packet.\n");
+             *     if (unlikely(nb_rx == 0)) {
+             *         for (i = 0; i < nb_rx; i++)
+             *             rte_pktmbuf_free(bufs[i]);
+             *     }
+             * 
+             * }
+             */
         }
     }
 #else
 pcap_loop:
+    uint8_t to_be_transfered; // Default is to transfer the packet.
+    to_be_transfered = 1; // Default is to transfer the packet.
     runPcapLoop(thread_id);
 
     if(playlist_fp[thread_id] != NULL) { /* playlist: read next file */
