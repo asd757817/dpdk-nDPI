@@ -1060,6 +1060,49 @@ void process_ndpi_collected_info(struct ndpi_workflow * workflow, struct ndpi_fl
     }
 }
 
+
+/* ****** Pattern matching ***** */
+
+/*
+ * Automata initialize
+ */
+
+int init_pattern_matching(){
+    /* Allocate memory and initialize automata */
+    pattern_match = malloc(sizeof(struct pattern_matching_automa));
+    // 0 for http
+    pattern_match->automa[0] = ndpi_init_automa();
+    
+    /* Read pattern file and add into automata */
+    int check; char *buf; size_t len=0;
+    FILE *fd = fopen("patterns.txt", "r");
+    if(fd){
+        while(getline(&buf, &len, fd) != -1 ){
+            buf = strtok(buf, "\n");
+            check = ndpi_add_string_to_automa(pattern_match->automa[0], buf);
+            if(check)
+                printf("Add pattern error.\n");
+        }
+        fclose(fd);
+    }
+    else
+        printf("Read pattern file error.\n");
+
+    /* Finalize */
+    ndpi_finalize_automa(pattern_match->automa[0]);
+}
+
+/*
+ * Search for pattern(s) in payload
+ */
+static void
+search_for_pattern(int db_id, uint8_t *payload){
+    /* Search for pattern(s) and record */
+    if(ndpi_match_string(pattern_match->automa[db_id], payload)==1){
+        printf("Detect a malicious packet\n");
+    }
+}
+
 /* ****************************************************** */
 
 /**
@@ -1124,35 +1167,7 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow * workflow,
                 &tcph, &udph, &sport, &dport,
                 &src, &dst, &proto,
                 &payload, &payload_len, &src_to_dst_direction, when);
-
-    /************  Payload pattern matching  ************/
     
-    void *test_automa;
-    test_automa = ndpi_init_automa();
-
-    /* Add string to automata */
-    if(ndpi_add_string_to_automa(test_automa, "Spot")==1)
-        printf("Add string to automa error\n");
-    
-    ndpi_finalize_automa(test_automa);
-
-    char *buf;
-    buf = malloc(payload_len*sizeof(char));
-    memset(buf, '\0', payload_len);
-
-    char *tmp = (char *)payload;
-    strncpy(buf, tmp, payload_len); 
-
-    if(ndpi_match_string(test_automa, payload)==1){
-        printf("Detect a malicious packet\n");
-        printf("%d %d\n",iph->saddr, iph->daddr);
-    }
-
-
-
-
-    /****************************************************/
-
     if(flow != NULL) {
         struct timeval tdiff;
 
