@@ -514,7 +514,6 @@ void * processing_thread(void *_thread_id) {
     }
 #else
 pcap_loop:
-    uint8_t to_be_transfered; // Default is to transfer the packet.
     to_be_transfered = 1; // Default is to transfer the packet.
     runPcapLoop(thread_id);
 

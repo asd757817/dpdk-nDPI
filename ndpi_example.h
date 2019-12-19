@@ -65,8 +65,9 @@ static pcap_dumper_t *extcap_dumper = NULL;
 static char extcap_buf[16384];
 static char *extcap_capture_fifo    = NULL;
 static u_int16_t extcap_packet_filter = (u_int16_t)-1;
+static int sig_called = 0;
 #ifdef USE_DPDK
-static int dpdk_port_id = 0, dpdk_run_capture = 1, sig_called = 0;
+static int dpdk_port_id = 0, dpdk_run_capture = 1;
 #endif
 
 /* Extern var */
