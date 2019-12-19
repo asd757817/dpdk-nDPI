@@ -491,25 +491,28 @@ void * processing_thread(void *_thread_id) {
                 for (i = nb_tx; i < nb_rx; i++)
                     rte_pktmbuf_free(bufs[i]);
             }
-
+            
             /*
-             * if(to_be_transfered){
-             *     const uint16_t nb_tx = rte_eth_tx_burst(dpdk_port_id^1, 0, bufs, nb_rx);
-             *     [> Free any unsent packets. <]
-             *     if (unlikely(nb_tx < nb_rx)) {
-             *         for (i = nb_tx; i < nb_rx; i++)
-             *             rte_pktmbuf_free(bufs[i]);
-             *     }
-             * }
-             * else{
-             *     printf("Block the packet.\n");
-             *     if (unlikely(nb_rx == 0)) {
-             *         for (i = 0; i < nb_rx; i++)
-             *             rte_pktmbuf_free(bufs[i]);
-             *     }
-             * 
-             * }
+             * If detect a packet containing pre-defined pattern -> block the packet
+             * else -> transfer the pakcet
              */
+
+            /* if(to_be_transfered){
+                const uint16_t nb_tx = rte_eth_tx_burst(dpdk_port_id^1, 0, bufs, nb_rx);
+                [>Free any unsent packets.<]
+                if (unlikely(nb_tx < nb_rx)) {
+                    for (i = nb_tx; i < nb_rx; i++)
+                        rte_pktmbuf_free(bufs[i]);
+                }
+            }
+            else{
+                printf("Block the packet.\n");
+                if (unlikely(nb_rx == 0)) {
+                    for (i = 0; i < nb_rx; i++)
+                        rte_pktmbuf_free(bufs[i]);
+                }
+            
+            } */
         }
     }
 #else

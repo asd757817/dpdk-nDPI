@@ -798,17 +798,14 @@ static struct ndpi_flow_info *get_ndpi_flow_info(struct ndpi_workflow * workflow
     idx = hashval % workflow->prefs.num_roots;
     ret = ndpi_tfind(&flow, &workflow->ndpi_flows_root[idx], ndpi_workflow_node_cmp);
 
+
+
     /*
-     * to_be_transfered = search_for_pattern(0, *payload);
+     * Search for patterns in payload
+     * TODO: check if the payload exsits or not before pattern matching.
      */
-    /* Pattern matching alert */
-    /*
-     * if(!to_be_transfered){
-     *     printf("\nReceive a packet containing malicious payload and the payload is:\n");
-     *     printf("%s\n", *payload);
-     *     printf("=================================\n");
-     * }
-     */
+
+    //to_be_transfered = search_for_pattern(0, *payload);
 
     /*
      * To avoid two nodes in one binary tree for a flow
