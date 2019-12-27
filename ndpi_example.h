@@ -567,7 +567,6 @@ static void parseOptions(int argc, char **argv) {
             case 'n':
 
                 num_threads = atoi(optarg);
-                printf("nb_thread = %d \n", num_threads);
                 break;
 
             case 'p':

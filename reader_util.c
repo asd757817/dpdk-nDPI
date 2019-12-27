@@ -805,7 +805,9 @@ static struct ndpi_flow_info *get_ndpi_flow_info(struct ndpi_workflow * workflow
      * TODO: check if the payload exsits or not before pattern matching.
      */
 
-    //to_be_transfered = search_for_pattern(0, *payload);
+    to_be_transfered = search_for_pattern(0, *payload);
+    if(!to_be_transfered)
+        printf("Warn! Detect a packet containing malicious pattern!\n");
 
     /*
      * To avoid two nodes in one binary tree for a flow

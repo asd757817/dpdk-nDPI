@@ -21,19 +21,17 @@
 #include <sys/mman.h>
 #include <libgen.h>
 
-#include <rte_arp.h>
-
 #include "reader_util.h"
 #include "ndpi_example.h"
 
-u_int8_t enable_protocol_guess = 1, enable_payload_analyzer = 0;
-u_int8_t verbose = 0, enable_joy_stats = 0;
 int nDPI_LogLevel = 0;
 char *_debug_protocols = NULL;
+
+u_int8_t enable_protocol_guess = 1, enable_payload_analyzer = 0;
+u_int8_t verbose = 0, enable_joy_stats = 0;
 u_int8_t human_readeable_string_len = 5;
 u_int8_t max_num_udp_dissected_pkts = 16;//8 is enough for most protocols, Signal requires more */
 u_int8_t max_num_tcp_dissected_pkts = 80; /* due to telnet */
-
 u_int8_t num_threads = 1;
 
 struct port_stats *srcStats = NULL, *dstStats = NULL; 
@@ -430,6 +428,7 @@ void printPortStats(struct port_stats *stats) {
     }
 }
 
+
 void * processing_thread(void *_thread_id) {
     long thread_id = (long) _thread_id;
     char pcap_error_buffer[PCAP_ERRBUF_SIZE];
@@ -439,121 +438,60 @@ void * processing_thread(void *_thread_id) {
     if(core_affinity[thread_id] >= 0) {
         cpu_set_t cpuset;
 
-        CPU_ZERO(&cpuset);
-        CPU_SET(core_affinity[thread_id], &cpuset);
+        CPU_ZERO(&cpuset);  // init cpu set 
+        CPU_SET(core_affinity[thread_id], &cpuset); // add a cpu into a cpu set
 
         if(pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset) != 0)
             fprintf(stderr, "Error while binding thread %ld to core %d\n", thread_id, core_affinity[thread_id]);
         else {
             if((!quiet_mode)) printf("Running thread %ld on core %d...\n", thread_id, core_affinity[thread_id]);
         }
-    } else
+    } 
 #endif
 
-
-        if((!quiet_mode)) printf("Running thread %ld...\n", thread_id);
-
-#ifdef USE_DPDK        
-    /*
-     * port_0 IP: 192.168.0.10
-     * port_1 IP: 192.168.1.20
-     */
-    u_int32_t port_ip[2] = {0x0A00A8C0, 0x1401A8C0};
-
-    while(dpdk_run_capture) {
-        /* Receive packets from each port */
-        RTE_ETH_FOREACH_DEV(dpdk_port_id){
-            struct rte_mbuf *bufs[BURST_SIZE];
-            u_int16_t nb_rx = rte_eth_rx_burst(dpdk_port_id, 0, bufs, BURST_SIZE);
-            u_int i;
-            uint16_t nb_tx;
-            uint16_t port_to_fwd;
-            if (unlikely(nb_rx == 0))
-                continue;
-
-
-            /* for(i = 0; i < PREFETCH_OFFSET && i < nb_rx; i++)
-               rte_prefetch0(rte_pktmbuf_mtod(bufs[i], void *)); */
-
-            /*
-             * When receive packets, create pcap header
-             * then process the packe
-             */
-            for(i = 0; i < nb_rx; i++) {
-                char *data = rte_pktmbuf_mtod(bufs[i], char *);
-                int pkt_len = rte_pktmbuf_pkt_len(bufs[i]);
-                
-/*
- *                 [> Get pcap format <]
- *                 struct pcap_pkthdr h;
- *                 h.len = h.caplen = pkt_len;
- *                 gettimeofday(&h.ts, NULL);
- * 
- *                 to_be_transfered = 1;
- *                 [> Call the function to process the packets <]
- *                 ndpi_process_packet((u_char*)&thread_id, &h, (const u_char *)data);
- */
-
-                /* Parse Ethernet packet */
-                struct ether_hdr *eth_hdr = (struct ether_hdr *)data;
-                uint16_t ether_type = ntohs(eth_hdr->ether_type);
-
-                /* If Protocok is ARP request */
-                if(ether_type > 1500){
-                    struct arp_hdr *arp_hdr = (struct arp_hdr *)((char *)(eth_hdr + 1));
-                    /* Parse ARP dst ip */
-                    uint32_t dst_ip = arp_hdr->arp_data.arp_tip;
-                    if(dst_ip == port_ip[dpdk_port_id]){
-
-                        /* Swap MAC */
-                        struct ether_addr addr;
-                        rte_eth_macaddr_get(dpdk_port_id, &addr);
-                        eth_hdr->d_addr = eth_hdr->s_addr;
-                        eth_hdr->s_addr = addr;
-
-                        /* Swap IP */
-                        arp_hdr->arp_data.arp_tip = arp_hdr->arp_data.arp_sip;
-                        arp_hdr->arp_data.arp_sip = dst_ip;
-                        arp_hdr->arp_op = htons(2); // ARP reply
-
-                        /* Forwarding */
-                        nb_tx = rte_eth_tx_burst(dpdk_port_id, 0, bufs, nb_rx);
-                    }
+    if((!quiet_mode)) printf("Running thread %ld...\n", thread_id);
+#ifdef USE_DPDK
+        while(dpdk_run_capture) {
+            /* Receive packets from each port */
+            RTE_ETH_FOREACH_DEV(dpdk_port_id){
+                struct rte_mbuf *bufs[BURST_SIZE];
+                u_int16_t nb_rx = rte_eth_rx_burst(dpdk_port_id, 0, bufs, BURST_SIZE);
+                u_int i;
+                uint16_t nb_tx;
+                /* If no packet arrive */
+                if (unlikely(nb_rx == 0))
+                    continue;
+    
+                for(i = 0; i < PREFETCH_OFFSET && i < nb_rx; i++)
+                    rte_prefetch0(rte_pktmbuf_mtod(bufs[i], void *));
+    
+                /* When receive packets, create pcap header and process the packet. */
+                for(i = 0; i < nb_rx; i++) {
+                    char *data = rte_pktmbuf_mtod(bufs[i], char *);
+                    int pkt_len = rte_pktmbuf_pkt_len(bufs[i]);
+    
+                    /* Get pcap format */
+                    struct pcap_pkthdr h;
+                    h.len = h.caplen = pkt_len;
+                    gettimeofday(&h.ts, NULL);
+                    to_be_transfered = 1; // Default is to transfer the packet
+    
+                    /* Call the function to process the packets */
+                    ndpi_process_packet((u_char*)&thread_id, &h, (const u_char *)data);
                 }
+    
+                /* Send burst of TX packets, to second port of pair. */
+                nb_tx = rte_eth_tx_burst(dpdk_port_id^1, 0, bufs, nb_rx);
+    
+                /* Free any unsent packets. */
+                if (unlikely(nb_tx < nb_rx)) {
+                    for (i = nb_tx; i < nb_rx; i++)
+                        rte_pktmbuf_free(bufs[i]);
+                }
+                /* Packet contains pre-defined patterns or not. */
+                /* if(to_be_transfered) */
             }
-
-            
-            /* Send burst of TX packets, to second port of pair. */
-            nb_tx = rte_eth_tx_burst(dpdk_port_id^1, 0, bufs, nb_rx);
-
-            /* Free any unsent packets. */
-            if (unlikely(nb_tx < nb_rx)) {
-                for (i = nb_tx; i < nb_rx; i++)
-                    rte_pktmbuf_free(bufs[i]);
-            }
-
-            /*
-             * If detect a packet containing pre-defined pattern -> block the packet
-             * else -> transfer the pakcet
-             */
-
-            /* if(to_be_transfered){
-               const uint16_t nb_tx = rte_eth_tx_burst(dpdk_port_id^1, 0, bufs, nb_rx);
-               [>Free any unsent packets.<]
-               if (unlikely(nb_tx < nb_rx)) {
-               for (i = nb_tx; i < nb_rx; i++)
-               rte_pktmbuf_free(bufs[i]);
-               }
-               }
-               else{
-               printf("Block the packet.\n");
-               if (unlikely(nb_rx == 0)) {
-               for (i = 0; i < nb_rx; i++)
-               rte_pktmbuf_free(bufs[i]);
-               }
-               } */
         }
-    }
 #else
 pcap_loop:
     to_be_transfered = 1; // Default is to transfer the packet.
@@ -603,6 +541,7 @@ void test_lib() {
 
     /* Running processing threads */
     printf("This process will create %d threads...\n", num_threads);
+
     for(thread_id = 0; thread_id < num_threads; thread_id++) {
         printf("Create thread %ld\n", thread_id);
 
@@ -627,7 +566,6 @@ void test_lib() {
             exit(-1);
         }
     }
-
     gettimeofday(&end, NULL);
     processing_time_usec = end.tv_sec*1000000 + end.tv_usec - (begin.tv_sec*1000000 + begin.tv_usec);
     setup_time_usec = begin.tv_sec*1000000 + begin.tv_usec - (startup_time.tv_sec*1000000 + startup_time.tv_usec);
