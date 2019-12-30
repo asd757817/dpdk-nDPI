@@ -23,20 +23,20 @@
 
 #include "reader_util.h"
 
-/* Normal var */
+int nDPI_LogLevel;
+int *count_packets;
+char *_debug_protocols;
 u_int8_t enable_protocol_guess, enable_payload_analyzer;
 u_int8_t verbose, enable_joy_stats;
-int nDPI_LogLevel;
-char *_debug_protocols;
 u_int8_t human_readeable_string_len;
 u_int8_t max_num_udp_dissected_pkts; // 8 is enough for most protocols, Signal requires more
 u_int8_t max_num_tcp_dissected_pkts; // due to telnet
+u_int8_t num_threads;
 u_int32_t current_ndpi_memory, max_ndpi_memory;
 #ifdef DEBUG_TRACE
 FILE *trace;
 #endif
-int *count_packets;
-/* Static var */
+
 static char *_pcap_file[MAX_NUM_READER_THREADS]; /**< Ingress pcap file/interfaces */
 static FILE *playlist_fp[MAX_NUM_READER_THREADS] = { NULL }; /**< Ingress playlist */
 static FILE *results_file           = NULL;
@@ -51,8 +51,6 @@ static u_int32_t pcap_analysis_duration = (u_int32_t)-1;
 static u_int16_t decode_tunnels = 0;
 static u_int16_t num_loops = 1;
 static u_int8_t shutdown_app = 0, quiet_mode = 0;
-// static u_int8_t num_threads = 1;
-u_int8_t num_threads;
 
 static struct timeval startup_time, begin, end;
 static int core_affinity[MAX_NUM_READER_THREADS];
@@ -66,11 +64,18 @@ static char extcap_buf[16384];
 static char *extcap_capture_fifo    = NULL;
 static u_int16_t extcap_packet_filter = (u_int16_t)-1;
 static int sig_called = 0;
+
 #ifdef USE_DPDK
-static int dpdk_port_id = 0, dpdk_run_capture = 1;
+static int dpdk_port_id[8], dpdk_run_capture = 1;
+typedef struct dpdk_lcore_info{
+    pthread_t pthread;
+    int rx_port_id;
+    long n;
+} lcore_info;
+
+static lcore_info lcore_infos[8]; 
 #endif
 
-/* Extern var */
 extern u_int32_t max_num_packets_per_flow, max_packet_payload_dissection, max_num_reported_top_payloads;
 extern u_int16_t min_pattern_len, max_pattern_len;
 
@@ -207,9 +212,9 @@ static struct option longopts[] = {
     {0, 0, 0, 0}
 };
 
-/* Function */
+/* Functions */
 void sigproc(int sig);
-void test_lib(); /* Forward */
+void test_lib(); /* forward */
 void automataUnitTest(); 
 void serializerUnitTest();
 void analyzeUnitTest();
