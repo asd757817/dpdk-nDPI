@@ -448,11 +448,9 @@ void * processing_thread(void *_thread_id) {
      *     } 
      * #endif
      */
-
-
 #ifdef USE_DPDK
 
-#ifdef USE_CORE_AFFINITY
+#ifdef USE_MULTICORE
     /* Set core affinity (bind thread on one core) */
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
@@ -460,11 +458,6 @@ void * processing_thread(void *_thread_id) {
 
     if(pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset) != 0)
         fprintf(stderr, "Error while binding thread %ld to core %d\n", thread_id, core_affinity[thread_id]);
-#endif
-    /*
-     * if((!quiet_mode)) 
-     *     printf("Running thread on core %ld\n", thread_id);
-     */
 
     /* In this section, thread_id == lcore_id */
     while(dpdk_run_capture) {
@@ -506,6 +499,49 @@ void * processing_thread(void *_thread_id) {
         /* Packet contains pre-defined patterns or not. */
         /* if(to_be_transfered) */
     }
+#else
+    while(dpdk_run_capture) {
+        /* Receive packets from each port */
+        RTE_ETH_FOREACH_DEV(dpdk_port_id){
+            struct rte_mbuf *bufs[BURST_SIZE];
+            u_int16_t nb_rx = rte_eth_rx_burst(dpdk_port_id, 0, bufs, BURST_SIZE);
+            u_int i;
+            uint16_t nb_tx;
+            /* If no packet arrive */
+            if (unlikely(nb_rx == 0))
+                continue;
+
+            for(i = 0; i < PREFETCH_OFFSET && i < nb_rx; i++)
+                rte_prefetch0(rte_pktmbuf_mtod(bufs[i], void *));
+
+            /* When receive packets, create pcap header and process the packet. */
+            for(i = 0; i < nb_rx; i++) {
+                char *data = rte_pktmbuf_mtod(bufs[i], char *);
+                int pkt_len = rte_pktmbuf_pkt_len(bufs[i]);
+
+                /* Get pcap format */
+                struct pcap_pkthdr h;
+                h.len = h.caplen = pkt_len;
+                gettimeofday(&h.ts, NULL);
+                to_be_transfered = 1; // Default is to transfer the packet
+
+                /* Call the function to process the packets */
+                ndpi_process_packet((u_char*)&thread_id, &h, (const u_char *)data);
+            }
+
+            /* Send burst of TX packets, to second port of pair. */
+            nb_tx = rte_eth_tx_burst(dpdk_port_id^1, 0, bufs, nb_rx);
+
+            /* Free any unsent packets. */
+            if (unlikely(nb_tx < nb_rx)) {
+                for (i = nb_tx; i < nb_rx; i++)
+                    rte_pktmbuf_free(bufs[i]);
+            }
+            /* Packet contains pre-defined patterns or not. */
+            /* if(to_be_transfered) */
+        }
+    }
+#endif
 #else
     if((!quiet_mode)) printf("Running thread %ld...\n", thread_id);
 pcap_loop:
@@ -554,9 +590,13 @@ void test_lib() {
     int status;
     void * thd_res;
 
-#ifdef USE_DPDK
-    int nid = 0, rx_port_id = 0; long lcore_id;
+#ifdef USE_MULTICORE
+    /*
+     * Enable multi-core support.
+     * Bind each thread to a particular core
+     */
 
+    int nid = 0, rx_port_id = 0; long lcore_id;
     /* Set thread and port */
     RTE_LCORE_FOREACH(lcore_id){
         lcore_infos[lcore_id].rx_port_id = rx_port_id;

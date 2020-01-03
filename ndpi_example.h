@@ -66,7 +66,7 @@ static u_int16_t extcap_packet_filter = (u_int16_t)-1;
 static int sig_called = 0;
 
 #ifdef USE_DPDK
-static int dpdk_port_id[8], dpdk_run_capture = 1;
+static int dpdk_port_id, dpdk_run_capture = 1;
 typedef struct dpdk_lcore_info{
     pthread_t pthread;
     int rx_port_id;
