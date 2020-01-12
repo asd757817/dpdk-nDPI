@@ -566,6 +566,7 @@ pcap_loop:
  * Begin, process, end detection process
  */
 void test_lib() {
+
     struct timeval end;
     u_int64_t processing_time_usec, setup_time_usec;
     long thread_id;
@@ -589,7 +590,6 @@ void test_lib() {
 
     int status;
     void * thd_res;
-
 #ifdef USE_MULTICORE
     /*
      * Enable multi-core support.
