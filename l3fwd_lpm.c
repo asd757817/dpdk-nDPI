@@ -387,6 +387,9 @@ static inline void lpm_parse_ptype(struct rte_mbuf *m)
 
     eth_hdr = rte_pktmbuf_mtod(m, struct ether_hdr *);
     ether_type = eth_hdr->ether_type;
+
+    printf("ether_type : %u == %u \n", ether_type, rte_cpu_to_be_16(ETHER_TYPE_IPv4));
+
     if (ether_type == rte_cpu_to_be_16(ETHER_TYPE_IPv4))
         packet_type |= RTE_PTYPE_L3_IPV4_EXT_UNKNOWN;
     else if (ether_type == rte_cpu_to_be_16(ETHER_TYPE_IPv6))
