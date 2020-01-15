@@ -234,7 +234,8 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
             nb_rx =
                 rte_eth_rx_burst(portid, queueid, pkts_burst, MAX_PKT_BURST);
 
-            if (nb_rx == 0)
+            if (unlikely(nb_rx == 0))
+            /* if (nb_rx == 0) */
                 continue;
 
             /* When receive packets, create pcap header and process the packet.
