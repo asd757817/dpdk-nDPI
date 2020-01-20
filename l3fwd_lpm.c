@@ -235,7 +235,7 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
                 rte_eth_rx_burst(portid, queueid, pkts_burst, MAX_PKT_BURST);
 
             if (unlikely(nb_rx == 0))
-            /* if (nb_rx == 0) */
+                /* if (nb_rx == 0) */
                 continue;
 
             /* When receive packets, create pcap header and process the packet.
@@ -250,7 +250,8 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
                 gettimeofday(&h.ts, NULL);
 
                 /* Call the function to process the packets */
-                /* ndpi_process_packet((u_char *) (0), &h, (const u_char *) data); */
+                ndpi_process_packet((u_char *) (0), &h, (const u_char *)
+                data); 
             }
 #if defined RTE_ARCH_X86 || defined RTE_MACHINE_CPUFLAG_NEON || \
     defined RTE_ARCH_PPC_64
@@ -387,8 +388,6 @@ static inline void lpm_parse_ptype(struct rte_mbuf *m)
 
     eth_hdr = rte_pktmbuf_mtod(m, struct ether_hdr *);
     ether_type = eth_hdr->ether_type;
-
-    printf("ether_type : %u == %u \n", ether_type, rte_cpu_to_be_16(ETHER_TYPE_IPv4));
 
     if (ether_type == rte_cpu_to_be_16(ETHER_TYPE_IPv4))
         packet_type |= RTE_PTYPE_L3_IPV4_EXT_UNKNOWN;
