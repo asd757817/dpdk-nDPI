@@ -5,15 +5,6 @@
 #include <errno.h>
 #include <getopt.h>
 #include <inttypes.h>
-#include <stdarg.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/queue.h>
-#include <sys/types.h>
-
 #include <rte_cycles.h>
 #include <rte_debug.h>
 #include <rte_ethdev.h>
@@ -24,6 +15,16 @@
 #include <rte_mbuf.h>
 #include <rte_tcp.h>
 #include <rte_udp.h>
+#include <stdarg.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/queue.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include "l3fwd.h"
 /* nDPI packet detction */
@@ -184,6 +185,7 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
     uint16_t portid;
     uint8_t queueid;
     struct lcore_conf *qconf;
+
     const uint64_t drain_tsc =
         (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * BURST_TX_DRAIN_US;
 
@@ -206,12 +208,58 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
                 lcore_id, portid, queueid);
     }
 
+    /* pipe, 0 --> read end, 1 --> write end */
+    int fd_capture_to_analyze[2], fd_analyze_to_capture[2];
+    if (pipe(fd_capture_to_analyze) == -1) {
+        fprintf(stderr, "Pipe failed!\n");
+    }
+    if (pipe(fd_analyze_to_capture) == -1) {
+        fprintf(stderr, "Pipe failed!\n");
+    }
+
+/*
+ *     [> Create multi-processes <]
+ *     pid_t p;
+ *     p = fork();
+ * 
+ *     if (p < 0) {
+ *         fprintf(stderr, "fork failed!\n");
+ *         return 1;
+ *     }
+ *     [> Parent capture & forward <]
+ *     else if (p > 0) {
+ *         [> close read end <]
+ *         close(fd_capture_to_analyze[0]);
+ *         // capture packets
+ * 
+ *         // wait decision from analysis module
+ * 
+ *         [> close write end <]
+ *         close(fd_analyze_to_capture[1]);
+ *         // forward packets
+ * 
+ *         wait(NULL);
+ *     }
+ *     [> Analyze <]
+ *     else {
+ *         [> close write end <]
+ *         close(fd_capture_to_analyze[1]);
+ *         // receive a copy of packet from capture/forward module
+ * 
+ *         // call analyze function and make a decision.
+ * 
+ *         [> close read end <]
+ *         close(fd_analyze_to_capture[0]);
+ *         // tell capture/forward module the final decision
+ *     }
+ */
+
+
+
     while (!force_quit) {
         cur_tsc = rte_rdtsc();
 
-        /*
-         * TX burst queue drain
-         */
+        /* TX burst queue drain */
         diff_tsc = cur_tsc - prev_tsc;
         if (unlikely(diff_tsc > drain_tsc)) {
             for (i = 0; i < qconf->n_tx_port; ++i) {
@@ -225,9 +273,7 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
             prev_tsc = cur_tsc;
         }
 
-        /*
-         * Read packet from RX queues
-         */
+        /* Read packet from RX queues */
         for (i = 0; i < qconf->n_rx_queue; ++i) {
             portid = qconf->rx_queue_list[i].port_id;
             queueid = qconf->rx_queue_list[i].queue_id;
@@ -237,6 +283,8 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
             if (unlikely(nb_rx == 0))
                 /* if (nb_rx == 0) */
                 continue;
+
+            /* printf("Receive packet from port %u\n", portid); */
 
             /* When receive packets, create pcap header and process the packet.
              */
@@ -250,8 +298,8 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
                 gettimeofday(&h.ts, NULL);
 
                 /* Call the function to process the packets */
-                ndpi_process_packet((u_char *) (0), &h, (const u_char *)
-                data); 
+                ndpi_process_packet((u_char *) portid, &h,
+                                    (const u_char *) data);
             }
 #if defined RTE_ARCH_X86 || defined RTE_MACHINE_CPUFLAG_NEON || \
     defined RTE_ARCH_PPC_64

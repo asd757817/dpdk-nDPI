@@ -819,15 +819,15 @@ static int dpdk_l3fwd_init(int argc, char **argv)
     ret_nb += ret;
 
     force_quit = false;
-    signal(SIGINT, signal_handler);
-    signal(SIGTERM, signal_handler);
-
     /* pre-init dst MACs for all ports to 02:00:00:00:00:xx */
+
+    /*
     dest_eth_addr[0] = 0xad46ef290c00;
     dest_eth_addr[1] = 0x6109ec290c00;
     for (uint16_t i = 0; i < 2; i++) {
         *(uint64_t *) (val_eth + i) = dest_eth_addr[i];
     }
+    */
 
     /* parse application arguments (after the EAL ones) */
     ret = parse_args(argc, argv);
@@ -2122,44 +2122,27 @@ pcap_loop:
     return NULL;
 }
 
-/**
- * @brief Begin, process, end detection process
- */
+/* Create threads, Start to capture, analyze and transfer packets */
 void test_lib()
 {
     u_int64_t processing_time_usec, setup_time_usec;
-    long thread_id;
-
-#ifdef DEBUG_TRACE
-    if (trace)
-        fprintf(trace, "Num threads: %d\n", num_threads);
-#endif
-
-    for (thread_id = 0; thread_id < num_threads; thread_id++) {
-        pcap_t *cap;
-
-#ifdef DEBUG_TRACE
-        if (trace)
-            fprintf(trace, "Opening %s\n",
-                    (const u_char *) _pcap_file[thread_id]);
-#endif
-
-        cap = openPcapFileOrDevice(thread_id,
-                                   (const u_char *) _pcap_file[thread_id]);
-        setupDetection(thread_id, cap);
-    }
-
-    gettimeofday(&begin, NULL);
-
-    int status;
-    void *thd_res;
-
 #ifdef USE_DPDK
 
     uint16_t portid;
     unsigned lcore_id;
+    int nb_ports = rte_eth_dev_count_avail();
 
-    /* launch per-lcore init on every lcore */
+    /* Setup Detection model */
+    for (portid = 0; portid < nb_ports; portid++) {
+        pcap_t *cap;
+        cap = openPcapFileOrDevice(portid,
+                                   (const u_char *) _pcap_file[portid]);
+        setupDetection(portid, cap);
+    }
+
+    gettimeofday(&begin, NULL);
+
+    /* Launch per-lcore init on every lcore */
     rte_eal_mp_remote_launch(l3fwd_lkp.main_loop, NULL, CALL_MASTER);
     RTE_LCORE_FOREACH_SLAVE(lcore_id)
     {
@@ -2168,7 +2151,7 @@ void test_lib()
         }
     }
 
-    /* stop ports */
+    /* Stop ports */
     RTE_ETH_FOREACH_DEV(portid)
     {
         if ((enabled_port_mask & (1 << portid)) == 0)
@@ -2180,7 +2163,38 @@ void test_lib()
     }
     printf("Bye...\n");
 
+    gettimeofday(&end, NULL);
+    processing_time_usec = end.tv_sec * 1000000 + end.tv_usec -
+                           (begin.tv_sec * 1000000 + begin.tv_usec);
+    setup_time_usec = begin.tv_sec * 1000000 + begin.tv_usec -
+                      (startup_time.tv_sec * 1000000 + startup_time.tv_usec);
+
+    /* Printing cumulative results */
+    printResults(processing_time_usec, setup_time_usec);
+
+    /* pcap close */
+    for (portid = 0; portid < nb_ports; portid++) {
+        if (ndpi_thread_info[portid].workflow->pcap_handle != NULL)
+            pcap_close(ndpi_thread_info[portid].workflow->pcap_handle);
+
+        terminateDetection(portid);
+    }
 #else
+
+    long thread_id;
+    int status;
+    void *thd_res;
+
+    for (thread_id = 0; thread_id < num_threads; thread_id++) {
+        pcap_t *cap;
+
+        cap = openPcapFileOrDevice(thread_id,
+                                   (const u_char *) _pcap_file[thread_id]);
+        setupDetection(thread_id, cap);
+    }
+    gettimeofday(&begin, NULL);
+
+
     /* Running processing threads */
     for (thread_id = 0; thread_id < num_threads; thread_id++) {
         status = pthread_create(&ndpi_thread_info[thread_id].pthread, NULL,
@@ -2205,7 +2219,6 @@ void test_lib()
             exit(-1);
         }
     }
-#endif
 
     gettimeofday(&end, NULL);
     processing_time_usec = end.tv_sec * 1000000 + end.tv_usec -
@@ -2222,6 +2235,8 @@ void test_lib()
 
         terminateDetection(thread_id);
     }
+#endif
+
 }
 
 /* *********************************************** */
@@ -2441,11 +2456,7 @@ void bpf_filter_port_array_add(int filter_array[], int size, int port)
     exit(-1);
 }
 
-/* *********************************************** */
 
-/**
-   @brief MAIN FUNCTION
-**/
 int main(int argc, char **argv)
 {
     int i;
@@ -2489,8 +2500,8 @@ int main(int argc, char **argv)
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
-    for (i = 0; i < num_loops; i++)
-        test_lib();
+    /* for (i = 0; i < num_loops; i++) */
+    test_lib();
 
     /* output file .. not used  */
     /* if(results_path)  free(results_path); */

@@ -13,16 +13,14 @@ u_int8_t max_num_udp_dissected_pkts =
          max_num_tcp_dissected_pkts = 80 /* due to telnet */;
 
 /* Function define */
-
 static void on_protocol_discovered(struct ndpi_workflow *workflow,
                                    struct ndpi_flow_info *flow,
                                    void *udata)
 {
     ;
 }
-/*
- * Setup for detection begin
- */
+
+/* Setup for detection begin */
 void setupDetection(u_int16_t thread_id, pcap_t *pcap_handle)
 {
     NDPI_PROTOCOL_BITMASK all;
@@ -72,16 +70,14 @@ void setupDetection(u_int16_t thread_id, pcap_t *pcap_handle)
     ndpi_finalize_initalization(
         ndpi_thread_info[thread_id].workflow->ndpi_struct);
 }
-/*
- * Check packet
- */
+
+/* Check packet */
 void ndpi_process_packet(u_char *args,
                          const struct pcap_pkthdr *header,
                          const u_char *packet)
 {
-
     struct ndpi_proto p;
-    u_int16_t thread_id = (u_int16_t)0; //*((u_int16_t *) args);
+    u_int16_t thread_id = (u_int16_t) 0;  //*((u_int16_t *) args);
 
 
     /* allocate an exact size buffer to check overflows */
