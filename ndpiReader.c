@@ -92,6 +92,7 @@
 #include "ndpi_api.h"
 #include "ndpi_config.h"
 #include "ndpi_detection.h"
+#include "pattern_matching.h"
 
 /* local source */
 #include "intrusion_detection.h"
@@ -2474,8 +2475,12 @@ int main(int argc, char **argv)
     serializerUnitTest();
     analyzeUnitTest();
 
+    regex_PM_init();
+
     gettimeofday(&startup_time, NULL);
     ndpi_info_mod = ndpi_init_detection_module(ndpi_no_prefs);
+
+
 
     if (ndpi_info_mod == NULL)
         return -1;

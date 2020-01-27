@@ -80,6 +80,7 @@
 #include "ndpi_main.h"
 #include "reader_util.h"
 #include "ndpi_classify.h"
+#include "pattern_matching.h"
 
 extern u_int8_t enable_protocol_guess, enable_joy_stats, enable_payload_analyzer;
 extern u_int8_t verbose, human_readeable_string_len;
@@ -742,6 +743,19 @@ static struct ndpi_flow_info *get_ndpi_flow_info(struct ndpi_workflow * workflow
   idx = hashval % workflow->prefs.num_roots;
   ret = ndpi_tfind(&flow, &workflow->ndpi_flows_root[idx], ndpi_workflow_node_cmp);
 
+  /* pattern search here !!!!! */
+  if (strlen(*payload) > 0){
+      bool rv = regex_PM_search(*payload);
+      printf("Payload is:%s\n\n", *payload);
+      if (rv){
+          printf("Patter found !!!\n\n");
+
+      }
+      else{
+          printf("Patter not found.\n\n");
+      }
+  }
+
   /* to avoid two nodes in one binary tree for a flow */
   int is_changed = 0;
   if(ret == NULL) {
@@ -1157,6 +1171,7 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow * workflow,
 			      &tcph, &udph, &sport, &dport,
 			      &src, &dst, &proto,
 			      &payload, &payload_len, &src_to_dst_direction, when);
+
   else
     flow = get_ndpi_flow_info6(workflow, vlan_id,
 			       tunnel_type, iph6, ip_offset,

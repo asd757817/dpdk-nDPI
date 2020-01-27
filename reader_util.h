@@ -274,7 +274,6 @@ typedef struct ndpi_workflow {
   u_int32_t num_allocated_flows;
  } ndpi_workflow_t;
 
-
 /* TODO: remove wrappers parameters and use ndpi global, when their initialization will be fixed... */
 struct ndpi_workflow * ndpi_workflow_init(const struct ndpi_workflow_prefs * prefs, pcap_t * pcap_handle);
 
