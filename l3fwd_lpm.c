@@ -208,6 +208,92 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
                 lcore_id, portid, queueid);
     }
 
+    while (!force_quit) {
+        cur_tsc = rte_rdtsc();
+
+        /* TX burst queue drain */
+        diff_tsc = cur_tsc - prev_tsc;
+        if (unlikely(diff_tsc > drain_tsc)) {
+            for (i = 0; i < qconf->n_tx_port; ++i) {
+                portid = qconf->tx_port_id[i];
+                if (qconf->tx_mbufs[portid].len == 0)
+                    continue;
+                send_burst(qconf, qconf->tx_mbufs[portid].len, portid);
+                qconf->tx_mbufs[portid].len = 0;
+            }
+
+            prev_tsc = cur_tsc;
+        }
+
+        /* Read packet from RX queues */
+        for (i = 0; i < qconf->n_rx_queue; ++i) {
+            portid = qconf->rx_queue_list[i].port_id;
+            queueid = qconf->rx_queue_list[i].queue_id;
+            nb_rx =
+                rte_eth_rx_burst(portid, queueid, pkts_burst, MAX_PKT_BURST);
+
+            if (unlikely(nb_rx == 0))
+                continue;
+
+            /* printf("Receive packet from port %u\n", portid); */
+
+            /* Create pcap header and process the packet. */
+            for (i = 0; i < nb_rx; i++) {
+                char *data = rte_pktmbuf_mtod(pkts_burst[i], char *);
+                int pkt_len = rte_pktmbuf_pkt_len(pkts_burst[i]);
+
+                /* Get pcap format */
+                struct pcap_pkthdr h;
+                h.len = h.caplen = pkt_len;
+                gettimeofday(&h.ts, NULL);
+
+                /* Call the function to process the packets */
+                ndpi_process_packet((u_char *) portid, &h,
+                                    (const u_char *) data);
+            }
+#if defined RTE_ARCH_X86 || defined RTE_MACHINE_CPUFLAG_NEON || \
+    defined RTE_ARCH_PPC_64
+            l3fwd_lpm_send_packets(nb_rx, pkts_burst, portid, qconf);
+#else
+            l3fwd_lpm_no_opt_send_packets(nb_rx, pkts_burst, portid, qconf);
+#endif /* X86 */
+        }
+    }
+    return 0;
+}
+
+int lpm_main_loop_pipe(__attribute__((unused)) void *dummy)
+{
+    struct rte_mbuf *pkts_burst[MAX_PKT_BURST];
+    unsigned lcore_id;
+    uint64_t prev_tsc, diff_tsc, cur_tsc;
+    int i, nb_rx;
+    uint16_t portid;
+    uint8_t queueid;
+    struct lcore_conf *qconf;
+
+    const uint64_t drain_tsc =
+        (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * BURST_TX_DRAIN_US;
+
+    prev_tsc = 0;
+
+    lcore_id = rte_lcore_id();
+    qconf = &lcore_conf[lcore_id];
+
+    if (qconf->n_rx_queue == 0) {
+        RTE_LOG(INFO, L3FWD, "lcore %u has nothing to do\n", lcore_id);
+        return 0;
+    }
+
+    RTE_LOG(INFO, L3FWD, "entering main loop on lcore %u\n", lcore_id);
+
+    for (i = 0; i < qconf->n_rx_queue; i++) {
+        portid = qconf->rx_queue_list[i].port_id;
+        queueid = qconf->rx_queue_list[i].queue_id;
+        RTE_LOG(INFO, L3FWD, " -- lcoreid=%u portid=%u rxqueueid=%hhu\n",
+                lcore_id, portid, queueid);
+    }
+
     /* pipe, 0 --> read end, 1 --> write end */
     int fd_capture_to_analyze[2], fd_analyze_to_capture[2];
     if (pipe(fd_capture_to_analyze) == -1) {
@@ -225,8 +311,9 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
         fprintf(stderr, "fork failed!\n");
         return 1;
     }
+
     /* Parent capture & forward */
-    else if (p > 0) {
+    else if (p == 0) {
         /* close read end */
         close(fd_capture_to_analyze[0]);
         /* close write end */
@@ -245,43 +332,36 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
                     send_burst(qconf, qconf->tx_mbufs[portid].len, portid);
                     qconf->tx_mbufs[portid].len = 0;
                 }
-
                 prev_tsc = cur_tsc;
             }
 
-            /* Read packet from RX queues */
             for (i = 0; i < qconf->n_rx_queue; ++i) {
                 portid = qconf->rx_queue_list[i].port_id;
                 queueid = qconf->rx_queue_list[i].queue_id;
                 nb_rx = rte_eth_rx_burst(portid, queueid, pkts_burst,
-                                         MAX_PKT_BURST);
+                        MAX_PKT_BURST);
 
                 if (unlikely(nb_rx == 0))
                     continue;
 
                 /* Send nb_rx */
                 if (write(fd_capture_to_analyze[1], &nb_rx, sizeof(nb_rx)) ==
-                    -1)
-                    fprintf(stderr, "Write error.\n");
+                        -1)
+                    fprintf(stderr, "Write nb_rx error.\n");
                 /* Send portid */
                 if (write(fd_capture_to_analyze[1], &portid, sizeof(portid)) ==
-                    -1)
-                    fprintf(stderr, "Write error.\n");
+                        -1)
+                    fprintf(stderr, "Write portid error.\n");
                 /* Send pkts_burst */
                 if (write(fd_capture_to_analyze[1], pkts_burst,
-                          sizeof(pkts_burst)) == -1)
-                    fprintf(stderr, "Write error.\n");
+                            sizeof(pkts_burst)) == -1)
+                    fprintf(stderr, "Write pkts_burst error.\n");
 
-                /*
-                 * int test;
-                 * if (read(fd_analyze_to_capture[0], &test, sizeof(test)) == -1)
-                 *     fprintf(stderr, "Read error.\n");
-                 * printf("test is %d\n", test);
-                 */
-
-                l3fwd_lpm_send_packets(nb_rx, pkts_burst, portid, qconf);
+                /* printf("Receive packet from port %u\n", portid); */
             }
         }
+        /* Kill child process */
+        kill(getpid(), SIGKILL);
     }
     /* Analyze */
     else {
@@ -291,99 +371,52 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
         close(fd_analyze_to_capture[0]);
 
         while (!force_quit) {
+            /* TX burst queue drain */
+            cur_tsc = rte_rdtsc();
+            diff_tsc = cur_tsc - prev_tsc;
+            if (unlikely(diff_tsc > drain_tsc)) {
+                for (i = 0; i < qconf->n_tx_port; ++i) {
+                    portid = qconf->tx_port_id[i];
+                    if (qconf->tx_mbufs[portid].len == 0)
+                        continue;
+                    send_burst(qconf, qconf->tx_mbufs[portid].len, portid);
+                    qconf->tx_mbufs[portid].len = 0;
+                }
+                prev_tsc = cur_tsc;
+            }
+
             /* Get nb_rx */
             if (read(fd_capture_to_analyze[0], &nb_rx, sizeof(nb_rx)) == -1)
-                fprintf(stderr, "Read error.\n");
-
+                fprintf(stderr, "Read nb_rx error.\n");
             /* Get portid */
             if (read(fd_capture_to_analyze[0], &portid, sizeof(portid)) == -1)
-                fprintf(stderr, "read error.\n");
+                fprintf(stderr, "read portid error.\n");
             /* Get pkt_burst */
             if (read(fd_capture_to_analyze[0], pkts_burst,
                      sizeof(pkts_burst)) == -1)
-                fprintf(stderr, "read error.\n");
+                fprintf(stderr, "read pkts_burst error.\n");
+
             /* printf("Receive %d pakcets from port_%u\n", nb_rx, portid); */
 
+            /* Create pcap header and process the packet. */
             for (i = 0; i < nb_rx; i++) {
                 char *data = rte_pktmbuf_mtod(pkts_burst[i], char *);
                 int pkt_len = rte_pktmbuf_pkt_len(pkts_burst[i]);
-                /* printf("pkt_len %d\n", pkt_len); */
 
-                /* Get pcap format */
+                /*Get pcap format*/
                 struct pcap_pkthdr h;
                 h.len = h.caplen = pkt_len;
                 gettimeofday(&h.ts, NULL);
 
-                /* Call analysis function */
+                /*Call the function to process the packets*/
                 ndpi_process_packet((u_char *) portid, &h,
                                     (const u_char *) data);
             }
 
-            /*
-             * int test = 10;
-             * if (write(fd_analyze_to_capture[1], &test, sizeof(test) == -1))
-             *     fprintf(stderr, "Write test error.\n");
-             */
-
+            /* Forwarding packets */
+            l3fwd_lpm_send_packets(nb_rx, pkts_burst, portid, qconf);
         }
-        /* Kill child process */
-        kill(getpid(), SIGKILL);
     }
-    /*
-     *     while (!force_quit) {
-     *         cur_tsc = rte_rdtsc();
-     *
-     *         [> TX burst queue drain <]
-     *         diff_tsc = cur_tsc - prev_tsc;
-     *         if (unlikely(diff_tsc > drain_tsc)) {
-     *             for (i = 0; i < qconf->n_tx_port; ++i) {
-     *                 portid = qconf->tx_port_id[i];
-     *                 if (qconf->tx_mbufs[portid].len == 0)
-     *                     continue;
-     *                 send_burst(qconf, qconf->tx_mbufs[portid].len, portid);
-     *                 qconf->tx_mbufs[portid].len = 0;
-     *             }
-     *
-     *             prev_tsc = cur_tsc;
-     *         }
-     *
-     *         [> Read packet from RX queues <]
-     *         for (i = 0; i < qconf->n_rx_queue; ++i) {
-     *             portid = qconf->rx_queue_list[i].port_id;
-     *             queueid = qconf->rx_queue_list[i].queue_id;
-     *             nb_rx =
-     *                 rte_eth_rx_burst(portid, queueid, pkts_burst,
-     * MAX_PKT_BURST);
-     *
-     *             if (unlikely(nb_rx == 0))
-     *                 [> if (nb_rx == 0) <]
-     *                 continue;
-     *
-     *             [> printf("Receive packet from port %u\n", portid); <]
-     *
-     *             [> Create pcap header and process the packet. <]
-     *             for (i = 0; i < nb_rx; i++) {
-     *                 char *data = rte_pktmbuf_mtod(pkts_burst[i], char *);
-     *                 int pkt_len = rte_pktmbuf_pkt_len(pkts_burst[i]);
-     *
-     *                 [> Get pcap format <]
-     *                 struct pcap_pkthdr h;
-     *                 h.len = h.caplen = pkt_len;
-     *                 gettimeofday(&h.ts, NULL);
-     *
-     *                 [> Call the function to process the packets <]
-     *                 ndpi_process_packet((u_char *) portid, &h,
-     *                                     (const u_char *) data);
-     *             }
-     * #if defined RTE_ARCH_X86 || defined RTE_MACHINE_CPUFLAG_NEON || \
-     *     defined RTE_ARCH_PPC_64
-     *             l3fwd_lpm_send_packets(nb_rx, pkts_burst, portid, qconf);
-     * #else
-     *             l3fwd_lpm_no_opt_send_packets(nb_rx, pkts_burst, portid,
-     * qconf); #endif [> X86 <]
-     *         }
-     *     }
-     */
     return 0;
 }
 
