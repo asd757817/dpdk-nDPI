@@ -2,16 +2,55 @@
 #include <stdio.h>
 #include <string.h>
 
+/*
+ * automata search
+ */
+void automata_PM_init()
+{
+    automata_patterns = ndpi_init_automa();
+    char *file_name = "rules/snort_parsed.txt";
+    /* Read patterns */
+    FILE *fd = fopen(file_name, "r");
+    char pat[1000];
 
+    while (fgets(pat, sizeof(pat), fd)) {
+        /* Ignore comments */
+        if (pat[0] == '#' || pat[0] == '\n')
+            ;
+        /* Add patterns */
+        else {
+            strtok(pat, "\n");
+            /* Add string to automata */
+            printf("add string: %s\n", pat);
+            ndpi_add_string_to_automa(automata_patterns, pat);
+        }
+    }
+    ndpi_finalize_automa(automata_patterns);
+}
+
+inline void automata_PM_release()
+{
+   ndpi_free_automa(automata_patterns);
+}
+
+
+inline bool automata_PM_search(char *str)
+{
+    return ndpi_match_string(automata_patterns, str);
+}
+
+
+/*
+ * Regular expression
+ */
 void regex_PM_init()
 {
     regex_patterns = malloc(MAX_PATTERNS * sizeof(regex_t));
-
     int ret;
     nb_real_patterns = 0;
-
+    char *file_name = "rules/snort_parsed.txt";
     /* Read patterns */
-    FILE *fd = fopen("patterns_regex.txt", "r");
+    FILE *fd = fopen(file_name, "r");
     char regexp[1000];
 
     while (fgets(regexp, sizeof(regexp), fd)) {

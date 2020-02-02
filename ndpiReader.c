@@ -213,7 +213,7 @@ static struct l3fwd_lkp_mode l3fwd_lpm_lkp = {
     .setup = setup_lpm,
     .check_ptype = lpm_check_ptype,
     .cb_parse_ptype = lpm_cb_parse_ptype,
-    //.main_loop = lpm_main_loop,
+    /* .main_loop = lpm_main_loop, */
     .main_loop = lpm_main_loop_pipe,
     .get_ipv4_lookup_struct = lpm_get_ipv4_l3fwd_lookup_struct,
     .get_ipv6_lookup_struct = lpm_get_ipv6_l3fwd_lookup_struct,
@@ -2475,7 +2475,8 @@ int main(int argc, char **argv)
     serializerUnitTest();
     analyzeUnitTest();
 
-    regex_PM_init();
+    /* regex_PM_init(); */
+    automata_PM_init();
 
     gettimeofday(&startup_time, NULL);
     ndpi_info_mod = ndpi_init_detection_module(ndpi_no_prefs);

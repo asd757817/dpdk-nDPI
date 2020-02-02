@@ -8,17 +8,29 @@
 #include "ndpi_api.h"
 #include "ndpi_config.h"
 
-/* Regular expression  */
-#include <regex.h>
+/*
+ * automata search
+ */
+void *automata_patterns;
+void automata_PM_init();
+void automata_PM_release();
+bool automata_PM_search(char *str);
 
+/*
+ * Regular expression 
+ */
+#include <regex.h>
 #define MAX_PATTERNS 100
 
 regex_t *regex_patterns;
 int nb_real_patterns;
-
 void regex_PM_init();
 void regex_PM_release();
 bool regex_PM_search(char *str);
 
-/* automata + regular expression */
+/*
+ * automata + regular expression
+ */
+
+
 #endif
