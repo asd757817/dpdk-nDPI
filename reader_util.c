@@ -77,6 +77,8 @@
 #define DLT_LINUX_SLL 113
 #endif
 
+#include <openssl/pem.h>
+#include <openssl/rsa.h>
 #include "ndpi_classify.h"
 #include "ndpi_main.h"
 #include "pattern_matching.h"
@@ -297,7 +299,8 @@ void ndpi_report_payload_stats()
 
     HASH_ITER(hh, pstats, p, tmp)
     {
-        if (num <= max_num_reported_top_payloads) print_payload_stat(p);
+        if (num <= max_num_reported_top_payloads)
+            print_payload_stat(p);
 
         free(p->pattern);
 
@@ -479,14 +482,16 @@ struct ndpi_workflow *ndpi_workflow_init(
     ndpi_set_log_level(module, nDPI_LogLevel);
 
     if (_debug_protocols != NULL && !_debug_protocols_ok) {
-        if (parse_debug_proto(module, _debug_protocols)) exit(-1);
+        if (parse_debug_proto(module, _debug_protocols))
+            exit(-1);
         _debug_protocols_ok = 1;
     }
 
 #ifdef NDPI_ENABLE_DEBUG_MESSAGES
     NDPI_BITMASK_RESET(module->debug_bitmask);
 
-    if (_debug_protocols_ok) module->debug_bitmask = debug_bitmask;
+    if (_debug_protocols_ok)
+        module->debug_bitmask = debug_bitmask;
 #endif
 
     workflow->ndpi_flows_root =
@@ -516,13 +521,18 @@ void ndpi_flow_info_freer(void *node)
 
 void ndpi_free_flow_data_analysis(struct ndpi_flow_info *flow)
 {
-    if (flow->iat_c_to_s) ndpi_free_data_analysis(flow->iat_c_to_s);
-    if (flow->iat_s_to_c) ndpi_free_data_analysis(flow->iat_s_to_c);
+    if (flow->iat_c_to_s)
+        ndpi_free_data_analysis(flow->iat_c_to_s);
+    if (flow->iat_s_to_c)
+        ndpi_free_data_analysis(flow->iat_s_to_c);
 
-    if (flow->pktlen_c_to_s) ndpi_free_data_analysis(flow->pktlen_c_to_s);
-    if (flow->pktlen_s_to_c) ndpi_free_data_analysis(flow->pktlen_s_to_c);
+    if (flow->pktlen_c_to_s)
+        ndpi_free_data_analysis(flow->pktlen_c_to_s);
+    if (flow->pktlen_s_to_c)
+        ndpi_free_data_analysis(flow->pktlen_s_to_c);
 
-    if (flow->iat_flow) ndpi_free_data_analysis(flow->iat_flow);
+    if (flow->iat_flow)
+        ndpi_free_data_analysis(flow->iat_flow);
 }
 
 /* ***************************************************** */
@@ -556,12 +566,14 @@ int ndpi_workflow_node_cmp(const void *a, const void *b)
     if (fa->vlan_id < fb->vlan_id)
         return (-1);
     else {
-        if (fa->vlan_id > fb->vlan_id) return (1);
+        if (fa->vlan_id > fb->vlan_id)
+            return (1);
     }
     if (fa->protocol < fb->protocol)
         return (-1);
     else {
-        if (fa->protocol > fb->protocol) return (1);
+        if (fa->protocol > fb->protocol)
+            return (1);
     }
 
     if (((fa->src_ip == fb->src_ip) && (fa->src_port == fb->src_port) &&
@@ -573,22 +585,26 @@ int ndpi_workflow_node_cmp(const void *a, const void *b)
     if (fa->src_ip < fb->src_ip)
         return (-1);
     else {
-        if (fa->src_ip > fb->src_ip) return (1);
+        if (fa->src_ip > fb->src_ip)
+            return (1);
     }
     if (fa->src_port < fb->src_port)
         return (-1);
     else {
-        if (fa->src_port > fb->src_port) return (1);
+        if (fa->src_port > fb->src_port)
+            return (1);
     }
     if (fa->dst_ip < fb->dst_ip)
         return (-1);
     else {
-        if (fa->dst_ip > fb->dst_ip) return (1);
+        if (fa->dst_ip > fb->dst_ip)
+            return (1);
     }
     if (fa->dst_port < fb->dst_port)
         return (-1);
     else {
-        if (fa->dst_port > fb->dst_port) return (1);
+        if (fa->dst_port > fb->dst_port)
+            return (1);
     }
 
     return (0); /* notreached */
@@ -740,7 +756,8 @@ static struct ndpi_flow_info *get_ndpi_flow_info(
       we handle IPv6 a-la-IPv4.
     */
     if (version == IPVERSION) {
-        if (ipsize < 20) return NULL;
+        if (ipsize < 20)
+            return NULL;
 
         if ((iph->ihl * 4) > ipsize || ipsize < ntohs(iph->tot_len)
             /* || (iph->frag_off & htons(0x1FFF)) != 0 */)
@@ -830,17 +847,6 @@ static struct ndpi_flow_info *get_ndpi_flow_info(
     ret = ndpi_tfind(&flow, &workflow->ndpi_flows_root[idx],
                      ndpi_workflow_node_cmp);
 
-    /* pattern search here !!!!! */
-    if (strlen(*payload) > 0) {
-        /* bool rv = regex_PM_search(*payload); */
-        bool rv = automata_PM_search(*payload);
-        /* printf("Payload is:%s\n\n", *payload); */
-        if (rv) {
-            printf("Patter found !!!\n");
-        } else {
-            printf("Patter not found.\n");
-        }
-    }
     /* to avoid two nodes in one binary tree for a flow */
     int is_changed = 0;
     if (ret == NULL) {
@@ -1077,7 +1083,8 @@ static u_int8_t is_ndpi_proto(struct ndpi_flow_info *flow, u_int16_t id)
 void process_ndpi_collected_info(struct ndpi_workflow *workflow,
                                  struct ndpi_flow_info *flow)
 {
-    if (!flow->ndpi_flow) return;
+    if (!flow->ndpi_flow)
+        return;
 
     snprintf(flow->host_server_name, sizeof(flow->host_server_name), "%s",
              flow->ndpi_flow->host_server_name);
@@ -1095,7 +1102,8 @@ void process_ndpi_collected_info(struct ndpi_workflow *workflow,
             j += 2, n += flow->ndpi_flow->protos.bittorrent.hash[i];
         }
 
-        if (n == 0) flow->bittorent_hash[0] = '\0';
+        if (n == 0)
+            flow->bittorent_hash[0] = '\0';
     }
     /* MDNS */
     else if (is_ndpi_proto(flow, NDPI_PROTOCOL_MDNS)) {
@@ -1366,7 +1374,8 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow *workflow,
             ) {
                 u_int32_t ms = ndpi_timeval_to_milliseconds(tdiff);
 
-                if (ms > 0) ndpi_data_add_value(flow->iat_flow, ms);
+                if (ms > 0)
+                    ndpi_data_add_value(flow->iat_flow, ms);
             }
         }
         memcpy(&flow->entropy.flow_last_pkt_time, &when, sizeof(when));
@@ -1448,7 +1457,8 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow *workflow,
             }
         }
 
-        if (flow->first_seen == 0) flow->first_seen = time;
+        if (flow->first_seen == 0)
+            flow->first_seen = time;
 
         flow->last_seen = time;
 
@@ -1505,10 +1515,11 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow *workflow,
                 ? 1
                 : 0;
 
+
 #if 0
     printf("%s()\n", __FUNCTION__);
 #endif
-        
+
         /* Detect the protocol of first seen flow */
         flow->detected_protocol = ndpi_detection_process_packet(
             workflow->ndpi_struct, ndpi_flow,
@@ -1529,7 +1540,7 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow *workflow,
 	if(ndpi_flow && ndpi_flow->check_extra_packets)
 	  flow->check_extra_packets = 1;
 #endif
-        /* If the detected_protocol is unknown, just guess one */
+                /* If the detected_protocol is unknown, just guess one */
                 if (flow->detected_protocol.app_protocol ==
                     NDPI_PROTOCOL_UNKNOWN) {
                     u_int8_t proto_guessed;
@@ -1543,10 +1554,32 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow *workflow,
             }
         }
     }
+    /* Check payload if payload_len > 0  */
+    if (payload_len > 0) {
+        /*
+           If the packet is a encrypted packet, then decrypt it
+           This is too difficult...
+        */
+
+        /* if (flow->detected_protocol.app_protocol == 91) {
+
+            char *buf = malloc(sizeof(char) * (payload_len + 1));
+            for (int i = 0; i < payload_len; i++){
+                sprintf(buf, "%c", payload[i]);
+            }
+        } */
+
+        /* Call pattern search */
+        /* bool rv = regex_pm_search(*payload); */
+        bool rv = automata_PM_search(*payload);
+        if (rv) {
+            printf("patter found !!!\n");
+            else { printf("patter not found.\n"); }
+        }
+    }
 
     return (flow->detected_protocol);
 }
-
 /* ****************************************************** */
 
 struct ndpi_proto ndpi_workflow_process_packet(struct ndpi_workflow *workflow,
@@ -1609,8 +1642,9 @@ struct ndpi_proto ndpi_workflow_process_packet(struct ndpi_workflow *workflow,
 
     /* safety check */
     if (workflow->last_time > time) {
-        /* printf("\nWARNING: timestamp bug in the pcap file (ts delta: %llu,
-         * repairing)\n", ndpi_thread_info[thread_id].last_time - time); */
+        /* printf("\nWARNING: timestamp bug in the pcap file (ts delta:
+         * %llu, repairing)\n", ndpi_thread_info[thread_id].last_time -
+         * time); */
         time = workflow->last_time;
     }
     /* update last time value */
@@ -1708,7 +1742,8 @@ datalink_check:
         /* Check ether_type from LLC */
         llc = (struct ndpi_llc_header_snap *) (packet + eth_offset + wifi_len +
                                                radio_len);
-        if (llc->dsap == SNAP) type = ntohs(llc->snap.proto_ID);
+        if (llc->dsap == SNAP)
+            type = ntohs(llc->snap.proto_ID);
 
         /* Set IP header offset */
         ip_offset = wifi_len + radio_len + sizeof(struct ndpi_llc_header_snap) +
@@ -1771,7 +1806,8 @@ ether_type_check:
         break;
     }
 
-    if (recheck_type) goto ether_type_check;
+    if (recheck_type)
+        goto ether_type_check;
 
     workflow->stats.vlan_count += vlan_packet;
 
@@ -1789,10 +1825,10 @@ iph_check:
 
             if (cap_warning_used == 0) {
                 if (!workflow->prefs.quiet_mode)
-                    NDPI_LOG(
-                        0, workflow->ndpi_struct, NDPI_LOG_DEBUG,
-                        "\n\nWARNING: packet capture size is smaller than "
-                        "packet size, DETECTION MIGHT NOT WORK CORRECTLY\n\n");
+                    NDPI_LOG(0, workflow->ndpi_struct, NDPI_LOG_DEBUG,
+                             "\n\nWARNING: packet capture size is smaller than "
+                             "packet size, DETECTION MIGHT NOT WORK "
+                             "CORRECTLY\n\n");
                 cap_warning_used = 1;
             }
         }
@@ -1873,13 +1909,14 @@ iph_check:
                     ip_offset +=
                         4; /* sequence_number is present (it also includes
                               next_ext_header and pdu_number) */
-                if (flags & 0x01) ip_offset += 1; /* pdu_number is present */
+                if (flags & 0x01)
+                    ip_offset += 1; /* pdu_number is present */
 
                 iph = (struct ndpi_iphdr *) &packet[ip_offset];
 
                 if (iph->version != IPVERSION) {
-                    // printf("WARNING: not good (packet_id=%u)!\n", (unsigned
-                    // int)workflow->stats.raw_packet_count);
+                    // printf("WARNING: not good (packet_id=%u)!\n",
+                    // (unsigned int)workflow->stats.raw_packet_count);
                     goto v4_warning;
                 }
             }
@@ -1991,7 +2028,8 @@ static void __crc32(const void *data, size_t n_bytes, uint32_t *crc)
     static uint32_t table[0x100], wtable[0x100 * sizeof(accum_t)];
     size_t n_accum = n_bytes / sizeof(accum_t);
     size_t i, j;
-    if (!*table) init_tables(table, wtable);
+    if (!*table)
+        init_tables(table, wtable);
     for (i = 0; i < n_accum; ++i) {
         accum_t a = *crc ^ ((accum_t *) data)[i];
         for (j = *crc = 0; j < sizeof(accum_t); ++j)
@@ -2027,24 +2065,28 @@ int dpdk_port_init(int port, struct rte_mempool *mbuf_pool)
     /* 1 RX queue */
     retval = rte_eth_dev_configure(port, rx_rings, tx_rings, &port_conf);
 
-    if (retval != 0) return retval;
+    if (retval != 0)
+        return retval;
 
     for (q = 0; q < rx_rings; q++) {
         retval = rte_eth_rx_queue_setup(port, q, RX_RING_SIZE,
                                         rte_eth_dev_socket_id(port), NULL,
                                         mbuf_pool);
-        if (retval < 0) return retval;
+        if (retval < 0)
+            return retval;
     }
 
     for (q = 0; q < tx_rings; q++) {
         retval = rte_eth_tx_queue_setup(port, q, TX_RING_SIZE,
                                         rte_eth_dev_socket_id(port), NULL);
-        if (retval < 0) return retval;
+        if (retval < 0)
+            return retval;
     }
 
     retval = rte_eth_dev_start(port);
 
-    if (retval < 0) return retval;
+    if (retval < 0)
+        return retval;
 
     rte_eth_promiscuous_enable(port);
 

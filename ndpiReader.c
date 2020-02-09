@@ -96,7 +96,7 @@
 
 /* local source */
 #include "intrusion_detection.h"
-#include "l3fwd.h"
+#include "l3fwd/l3fwd.h"
 #include "reader_util.h"
 #include "uthash.h"
 
@@ -1433,13 +1433,6 @@ static void parseOptions(int argc, char **argv)
 
 #ifdef USE_DPDK
     {
-        /*
-         *     int ret = rte_eal_init(argc, argv);
-         *
-         *     if(ret < 0)
-         *       rte_exit(EXIT_FAILURE, "Error with EAL initialization\n");
-         *
-         */
         int ret = dpdk_l3fwd_init(argc, argv);
         argc -= ret, argv += ret;
     }
@@ -2128,8 +2121,8 @@ pcap_loop:
 void test_lib()
 {
     u_int64_t processing_time_usec, setup_time_usec;
-#ifdef USE_DPDK
 
+#ifdef USE_DPDK
     uint16_t portid;
     unsigned lcore_id;
     int nb_ports = rte_eth_dev_count_avail();
@@ -2137,8 +2130,7 @@ void test_lib()
     /* Setup Detection model */
     for (portid = 0; portid < nb_ports; portid++) {
         pcap_t *cap;
-        cap = openPcapFileOrDevice(portid,
-                                   (const u_char *) _pcap_file[portid]);
+        cap = openPcapFileOrDevice(portid, (const u_char *) _pcap_file[portid]);
         setupDetection(portid, cap);
     }
 
@@ -2238,7 +2230,6 @@ void test_lib()
         terminateDetection(thread_id);
     }
 #endif
-
 }
 
 /* *********************************************** */

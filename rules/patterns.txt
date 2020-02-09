@@ -1,4 +1,0 @@
-bugs
-tags
-htm
-test

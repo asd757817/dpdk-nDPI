@@ -344,6 +344,8 @@ int lpm_main_loop_pipe(__attribute__((unused)) void *dummy)
                 if (unlikely(nb_rx == 0))
                     continue;
 
+                /* printf("Receive packet from port %u\n", portid); */
+
                 /* Send nb_rx */
                 if (write(fd_capture_to_analyze[1], &nb_rx, sizeof(nb_rx)) ==
                         -1)
@@ -357,7 +359,6 @@ int lpm_main_loop_pipe(__attribute__((unused)) void *dummy)
                             sizeof(pkts_burst)) == -1)
                     fprintf(stderr, "Write pkts_burst error.\n");
 
-                /* printf("Receive packet from port %u\n", portid); */
             }
         }
         /* Kill child process */

@@ -3,7 +3,7 @@
 #include <string.h>
 
 /*
- * automata search
+ * automata
  */
 void automata_PM_init()
 {
@@ -21,7 +21,6 @@ void automata_PM_init()
         else {
             strtok(pat, "\n");
             /* Add string to automata */
-            printf("add string: %s\n", pat);
             ndpi_add_string_to_automa(automata_patterns, pat);
         }
     }
