@@ -7,9 +7,11 @@
 
 #include "ndpi_api.h"
 #include "ndpi_config.h"
+#include "snort_rule_parser.h"
 
 /*
- * automata search
+ * Automaton pattern search algorithm. (AC algorithm)
+ * nDPI third-party library
  */
 void *automata_patterns;
 void automata_PM_init();
@@ -17,20 +19,17 @@ void automata_PM_release();
 bool automata_PM_search(char *str);
 
 /*
- * Regular expression 
+ * Include pcre library.
+ * Use dfa mode for pattern searching.
  */
-#include <regex.h>
-#define MAX_PATTERNS 100
-
-regex_t *regex_patterns;
+#include <pcre.h>
+pcre *re;
 int nb_real_patterns;
-void regex_PM_init();
-void regex_PM_release();
-bool regex_PM_search(char *str);
+void pcre_PS_init();
+void pcre_PS_release();
+bool pcre_PS_search(char *str);
 
-/*
- * automata + regular expression
- */
-
+/* Initialize all modules */
+void pattern_search_module_init();
 
 #endif

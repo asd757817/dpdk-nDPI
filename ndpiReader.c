@@ -2465,9 +2465,9 @@ int main(int argc, char **argv)
     automataUnitTest();
     serializerUnitTest();
     analyzeUnitTest();
+    
 
-    /* regex_PM_init(); */
-    automata_PM_init();
+    pattern_search_module_init();
 
     gettimeofday(&startup_time, NULL);
     ndpi_info_mod = ndpi_init_detection_module(ndpi_no_prefs);

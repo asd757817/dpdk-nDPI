@@ -1570,12 +1570,10 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow *workflow,
         } */
 
         /* Call pattern search */
-        /* bool rv = regex_pm_search(*payload); */
-        bool rv = automata_PM_search(*payload);
-        if (rv) {
-            printf("patter found !!!\n");
-            else { printf("patter not found.\n"); }
-        }
+        if (pcre_PS_search(payload) == 0)
+            printf("Not found!\n");
+        else
+            printf("Pattern Found!\n");
     }
 
     return (flow->detected_protocol);
