@@ -1,13 +1,14 @@
 #ifndef _SNORT_RULE_PARSER_H_
 #define _SNORT_RULE_PARSER_H_
 
+#include <pcre.h>
 #include <stdlib.h>
 #include <string.h>
-#include <pcre.h>
 
 /*
- * This structure stores contents which is malicious pattern used in payload check.
- * next_content means the rule contains multiple patterns that should be checked.
+ * This structure stores contents which is malicious pattern used in payload
+ * check. next_content means the rule contains multiple patterns that should be
+ * checked.
  */
 typedef struct c_node_t {
     struct c_node_t *next_content;
@@ -22,6 +23,7 @@ typedef struct pcre_node_t {
     struct pcre_node_t *next_pcre_node;
     char *rule;
     pcre *re;
+    struct pcre_node_t *next;
 } pcre_node_t;
 
 typedef struct pattern_node_t {
@@ -45,14 +47,14 @@ typedef struct snort_rule {
 } snort_rule;
 
 /*
- * Use a queue to record all rules.
+ * Use a list to record all rules.
  */
-typedef struct snort_rule_queue {
+typedef struct snort_rule_list {
     snort_rule *head;
     snort_rule *tail;
     int length;
-} snort_rule_queue;
-snort_rule_queue *snort_rule_q;
+} snort_rule_list;
+snort_rule_list *snort_rule_q;
 
 void snort_rule_init();
 void snort_parser_release();
@@ -60,5 +62,13 @@ void snort_parser_release();
 /*
  * Payload check module
  */
+typedef struct patterns_leaf_t {
+    void *ptr;
+    char *msg;
+    struct patterns_leaf_t *next;
+} patterns_leaf_t;
+
+patterns_leaf_t *patterns_root;
+
 
 #endif

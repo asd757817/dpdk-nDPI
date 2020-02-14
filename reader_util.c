@@ -1570,7 +1570,7 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow *workflow,
         } */
 
         /* Call pattern search */
-        if (pcre_PS_search(payload) == 0)
+        if (pcre_search(flow->detected_protocol.app_protocol, sport, dport, payload) == 0)
             printf("Not found!\n");
         else
             printf("Pattern Found!\n");

@@ -1,8 +1,8 @@
+#include "snort_rule_parser.h"
 #include <pcre.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
-
-#include "snort_rule_parser.h"
 
 /* Create a new content node */
 static struct c_node_t *c_node_new()
@@ -23,6 +23,7 @@ static struct pcre_node_t *pcre_node_new()
         node->next_pcre_node = NULL;
         node->rule = NULL;
         node->re = NULL;
+        node->next = NULL;
     }
     return node;
 }
@@ -56,10 +57,10 @@ static struct snort_rule *r_node_new()
     return r_node;
 }
 
-/* Create a queue to store snore_rule nodes */
-static struct snort_rule_queue *rule_queue_create()
+/* Create a list to store snore_rule nodes */
+static struct snort_rule_list *rule_list_create()
 {
-    snort_rule_queue *q = malloc(sizeof(snort_rule));
+    snort_rule_list *q = malloc(sizeof(snort_rule));
     if (q) {
         q->head = NULL;
         q->tail = NULL;
@@ -68,8 +69,8 @@ static struct snort_rule_queue *rule_queue_create()
     return q;
 }
 
-/* Insert a rule_node into rule_queue */
-static void rule_queue_insert(snort_rule_queue *q, snort_rule *r_node_new)
+/* Insert a rule_node into rule_list */
+static void rule_list_insert(snort_rule_list *q, snort_rule *r_node_new)
 {
     if (!q || !r_node_new)
         return;
@@ -84,35 +85,102 @@ static void rule_queue_insert(snort_rule_queue *q, snort_rule *r_node_new)
     }
 }
 
+static struct patterns_leaf_t *payload_check_module_new()
+{
+    patterns_leaf_t *node = malloc(sizeof(patterns_leaf_t));
+    if (node) {
+        node->ptr = NULL;
+        node->msg = NULL;
+        node->next = NULL;
+    }
+    return node;
+}
+
 /* Remove space at head and tail */
 static char *mystrip(char *str)
 {
     char *end;
     end = str + strlen(str) - 1;
-
+    while (str[0] == ' ')
+        str++;
     while (end >= str && (end[0] == ' '))
         end--;
     *(end + 1) = '\0';
 
-    while (str <= end && str[0] == ' ')
-        str++;
-
     return str;
 }
 
-static void pattern_search(pcre *re, char *text)
+/* Find the node which msg is target and return. */
+static patterns_leaf_t *find_leaf(char *target, patterns_leaf_t *start)
 {
-    const char *error;
-    int erroffest;
-    int ovector[100];
-    int workspace[100];
+    if (!target)
+        return NULL;
 
-    int ret = pcre_dfa_exec(re, NULL, text, strlen(text), 0, 0, ovector, 100,
-                            workspace, 100);
-    if (ret >= 0)
-        printf("Pattern found!\n");
-    else
-        printf("Not found!\n");
+    patterns_leaf_t *ret_node = start;
+    if (!start) {
+        ret_node = payload_check_module_new();
+        ret_node->msg = target;
+        start = ret_node;
+    } else {
+        while (strncmp(ret_node->msg, target, strlen(target)) != 0 &&
+               ret_node->next) {
+            ret_node = ret_node->next;
+        }
+        if (strncmp(ret_node->msg, target, strlen(target)) != 0) {
+            ret_node->next = payload_check_module_new();
+            ret_node = ret_node->next;
+            ret_node->msg = target;
+        }
+    }
+    return ret_node;
+}
+
+static void *find_patterns(char *protocol, char *src_port, char *dst_port)
+{
+    /* Start at root & check root */
+    patterns_leaf_t *location = patterns_root;
+    if (!location || strncmp(location->msg, "root", 4) != 0)
+        return NULL;
+
+    /* Find protocol node */
+    patterns_leaf_t *proto =
+        find_leaf(protocol, (patterns_leaf_t *) location->ptr);
+    if (location->ptr == NULL) {
+        /* printf("Add %s_leaf into the root\n", protocol); */
+        location->ptr = proto;
+    }
+
+    /* Find src_port node */
+    patterns_leaf_t *sp = find_leaf(src_port, (patterns_leaf_t *) proto->ptr);
+    if (proto->ptr == NULL) {
+        /* printf("Add %s_leaf into the %s_leaf\n", sp->msg, proto->msg); */
+        proto->ptr = sp;
+    }
+    /* Find dst_port node */
+    patterns_leaf_t *dp = find_leaf(dst_port, (patterns_leaf_t *) sp->ptr);
+    if (sp->ptr == NULL) {
+        /* printf("Add %s_leaf into the %s_%s_leaf\n", dp->msg, proto->msg,
+         * sp->msg); */
+        sp->ptr = dp;
+    }
+    return dp;
+}
+
+static void check_module_add_node(char **buf, pcre_node_t *pcre_node)
+{
+    /* Find the tcp -> src_port -> dst_port, get the dst_port leaf */
+    patterns_leaf_t *leaf = find_patterns(buf[1], buf[3], buf[6]);
+
+    /* dst_port points to the head of a pcre set */
+    pcre_node_t *list_head = (pcre_node_t *) leaf->ptr;
+    /* if the set is NULL */
+    if (list_head == NULL) {
+        leaf->ptr = pcre_node;
+    } else {
+        while (list_head->next != NULL)
+            list_head = list_head->next;
+        list_head->next = pcre_node;
+    }
 }
 
 /*
@@ -230,6 +298,7 @@ static void parse_rule(char *str)
             c++;
         }
     }
+
     /* Assign action, protocol, src_ip ... */
     rule_node->action = buf[0];
     rule_node->protocol = buf[1];
@@ -238,8 +307,12 @@ static void parse_rule(char *str)
     rule_node->dst_ip = buf[5];
     rule_node->dst_port = buf[6];
 
-    /* Insert rule_node into rule_queue */
-    rule_queue_insert(snort_rule_q, rule_node);
+    /* Insert rule_node into rule_list */
+    rule_list_insert(snort_rule_q, rule_node);
+
+    /* Insert pcre_node into check module */
+    if (pattern_node->pcre_node)
+        check_module_add_node(buf, pattern_node->pcre_node);
 
     return;
 }
@@ -290,20 +363,35 @@ static void show_rules()
     }
 }
 
+bool patterns_tree_init()
+{
+    patterns_root = payload_check_module_new();
+
+    if (patterns_root) {
+        char *msg = malloc(sizeof(char *));
+        strcpy(msg, "root");
+        patterns_root->msg = msg;
+
+        return true;
+    }
+    return false;
+}
+
 void snort_rule_init()
 {
     /* Parameters declaration. */
-    snort_rule_q = rule_queue_create();
+    snort_rule_q = rule_list_create();
+    int ret = patterns_tree_init();
+    if (!ret)
+        fprintf(stderr, "payload check module initialization error!\n");
 
     /* Read rule file & parse. */
     read_snort_rule();
 
-    /* show_rules(); */
-
     return;
 }
 
-void snort_parser_release(snort_rule_queue *q)
+void snort_rule_release(snort_rule_list *q)
 {
     snort_rule *r_node = q->head;
     while (r_node) {
