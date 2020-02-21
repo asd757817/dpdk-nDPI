@@ -143,8 +143,27 @@ extern u_int32_t max_num_packets_per_flow, max_packet_payload_dissection,
     max_num_reported_top_payloads;
 extern u_int16_t min_pattern_len, max_pattern_len;
 
-/* Functions declaration */
 
+/* Records for pattern matching */
+struct malicious_packet {
+    u_int32_t src_ip;
+    u_int16_t src_port;
+    u_int32_t dst_ip;
+    u_int16_t dst_port;
+    char *protocol;
+    char *application;
+    char *service;
+    struct malicious_packet *next;
+};
+struct dpi_results{
+    struct timeval duration_time, capture_time, analyze_time;
+    unsigned long total_rx_packets, total_rtx_packets, total_bytes, total_malicious;
+    struct malicious_packet *malicous_head;
+};
+struct dpi_results *dpiresults;
+
+
+/* Functions declaration */
 void setupDetection(u_int16_t thread_id, pcap_t *pcap_handle);
 
 void ndpi_process_packet(u_char *args,
@@ -211,6 +230,8 @@ char *print_cipher(ndpi_cipher_weakness c);
 void printResults(u_int64_t processing_time_usec, u_int64_t setup_time_usec);
 void printFlowsStats();
 void printPortStats(struct port_stats *stats);
+/* Show malicous info */
+void printMalicous();
 
 extern void ndpi_report_payload_stats();
 #endif

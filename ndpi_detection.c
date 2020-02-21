@@ -1706,6 +1706,11 @@ void printResults(u_int64_t processing_time_usec, u_int64_t setup_time_usec)
         printPortStats(dstStats);
     }
 
+    /* Print my info */
+    printf("\n\nTime info:\n Capture statge, Analyze statge\n %ld.%ld %ld.%ld\n",
+           dpiresults->capture_time.tv_sec, dpiresults->capture_time.tv_usec,
+           dpiresults->analyze_time.tv_sec, dpiresults->analyze_time.tv_usec);
+
 free_stats:
     if (scannerHosts) {
         deleteScanners(scannerHosts);
@@ -2252,4 +2257,11 @@ void printPortStats(struct port_stats *stats)
         if (i >= 10)
             break;
     }
+}
+void printMalicous()
+{
+    printf("123123\n");
+    printf("Time info:\n Capture statge, Analyze statge\n %ld.%ld %ld.%ld\n",
+           dpiresults->capture_time.tv_sec, dpiresults->capture_time.tv_usec,
+           dpiresults->analyze_time.tv_sec, dpiresults->analyze_time.tv_usec);
 }

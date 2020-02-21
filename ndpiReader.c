@@ -96,7 +96,7 @@
 
 /* local source */
 #include "intrusion_detection.h"
-#include "l3fwd/l3fwd.h"
+#include "l3fwd.h"
 #include "reader_util.h"
 #include "uthash.h"
 
@@ -2465,9 +2465,11 @@ int main(int argc, char **argv)
     automataUnitTest();
     serializerUnitTest();
     analyzeUnitTest();
-    
 
     pattern_search_module_init();
+    /* Init */
+    dpiresults = malloc(sizeof(struct dpi_results));
+
 
     gettimeofday(&startup_time, NULL);
     ndpi_info_mod = ndpi_init_detection_module(ndpi_no_prefs);
