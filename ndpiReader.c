@@ -214,7 +214,8 @@ static struct l3fwd_lkp_mode l3fwd_lpm_lkp = {
     .check_ptype = lpm_check_ptype,
     .cb_parse_ptype = lpm_cb_parse_ptype,
     /* .main_loop = lpm_main_loop, */
-    .main_loop = lpm_main_loop_pipe,
+    /* .main_loop = lpm_main_loop_pipe, */
+    .main_loop = lpm_main_loop_thread_pipe,
     .get_ipv4_lookup_struct = lpm_get_ipv4_l3fwd_lookup_struct,
     .get_ipv6_lookup_struct = lpm_get_ipv6_l3fwd_lookup_struct,
 };
@@ -1949,24 +1950,13 @@ static pcap_t *openPcapFileOrDevice(u_int16_t thread_id,
     char pcap_error_buffer[PCAP_ERRBUF_SIZE];
     pcap_t *pcap_handle = NULL;
 
-    /* trying to open a live interface */
-#ifdef USE_DPDK
     /*
-     * Initialize dpdk environment when parsing options
+     * If startup without dpdk
+     * -> Try to open a live interface or pcap file.
+     * else
+     * -> Do nothing.
      */
-
-    /* struct rte_mempool *mbuf_pool = rte_pktmbuf_pool_create("MBUF_POOL",
-       NUM_MBUFS, MBUF_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE,
-       rte_socket_id());
-
-       if(mbuf_pool == NULL)
-       rte_exit(EXIT_FAILURE, "Cannot create mbuf pool: are hugepages
-       ok?\n");
-
-       if(dpdk_port_init(dpdk_port_id, mbuf_pool) != 0)
-       rte_exit(EXIT_FAILURE, "DPDK: Cannot init port %u: please see
-       README.dpdk\n", dpdk_port_id); */
-#else
+#ifndef USE_DPDK
     if ((pcap_handle = pcap_open_live((char *) pcap_file, snaplen, promisc, 500,
                                       pcap_error_buffer)) == NULL) {
         capture_for = capture_until = 0;
@@ -2134,7 +2124,7 @@ void test_lib()
         setupDetection(portid, cap);
     }
 
-    gettimeofday(&begin, NULL);
+    gettimeofday(&begin, NULL); // program startup_time
 
     /* Launch per-lcore init on every lcore */
     rte_eal_mp_remote_launch(l3fwd_lkp.main_loop, NULL, CALL_MASTER);
@@ -2157,7 +2147,8 @@ void test_lib()
     }
     printf("Bye...\n");
 
-    gettimeofday(&end, NULL);
+    gettimeofday(&end, NULL); // program close_time
+    /* Calculate the running time of nDPI */
     processing_time_usec = end.tv_sec * 1000000 + end.tv_usec -
                            (begin.tv_sec * 1000000 + begin.tv_usec);
     setup_time_usec = begin.tv_sec * 1000000 + begin.tv_usec -
@@ -2173,8 +2164,8 @@ void test_lib()
 
         terminateDetection(portid);
     }
+    snort_parser_release();
 #else
-
     long thread_id;
     int status;
     void *thd_res;
@@ -2468,7 +2459,8 @@ int main(int argc, char **argv)
 
     pattern_search_module_init();
     /* Init */
-    dpiresults = malloc(sizeof(struct dpi_results));
+    /* for (int i = 0; i < 4; i++)
+        dpiresults[i] = malloc(sizeof(struct dpi_results)); */
 
 
     gettimeofday(&startup_time, NULL);

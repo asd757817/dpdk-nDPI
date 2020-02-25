@@ -1706,10 +1706,18 @@ void printResults(u_int64_t processing_time_usec, u_int64_t setup_time_usec)
         printPortStats(dstStats);
     }
 
-    /* Print my info */
-    printf("\n\nTime info:\n Capture statge, Analyze statge\n %ld.%ld %ld.%ld\n",
-           dpiresults->capture_time.tv_sec, dpiresults->capture_time.tv_usec,
-           dpiresults->analyze_time.tv_sec, dpiresults->analyze_time.tv_usec);
+    /* Print time info */
+    printf("\n\nTime info:\n");
+    float c_time, a_time;
+    printf("\t%-20s%-25s%-20s\n", "lcore", "Capturer", "Analyzer");
+    for (unsigned i = 0; i <= 3; i++) {
+        c_time = (dpiresults[i].capture_time.tv_sec * 1000000 +
+                  dpiresults[i].capture_time.tv_usec);
+        a_time = (dpiresults[i].analyze_time.tv_sec * 1000000 +
+                  dpiresults[i].analyze_time.tv_usec);
+
+        printf("\t%-20u%-25f%-20f\n", i, c_time / 1000000, a_time / 1000000);
+    }
 
 free_stats:
     if (scannerHosts) {
@@ -2258,10 +2266,4 @@ void printPortStats(struct port_stats *stats)
             break;
     }
 }
-void printMalicous()
-{
-    printf("123123\n");
-    printf("Time info:\n Capture statge, Analyze statge\n %ld.%ld %ld.%ld\n",
-           dpiresults->capture_time.tv_sec, dpiresults->capture_time.tv_usec,
-           dpiresults->analyze_time.tv_sec, dpiresults->analyze_time.tv_usec);
-}
+

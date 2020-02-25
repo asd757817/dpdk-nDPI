@@ -160,7 +160,7 @@ struct dpi_results{
     unsigned long total_rx_packets, total_rtx_packets, total_bytes, total_malicious;
     struct malicious_packet *malicous_head;
 };
-struct dpi_results *dpiresults;
+struct dpi_results dpiresults[4];
 
 
 /* Functions declaration */

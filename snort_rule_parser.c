@@ -391,12 +391,39 @@ void snort_rule_init()
     return;
 }
 
-void snort_rule_release(snort_rule_list *q)
+void snort_parser_release()
 {
-    snort_rule *r_node = q->head;
+    snort_rule *r_node = snort_rule_q->head;
     while (r_node) {
         snort_rule *next = r_node->next;
+
+        free(r_node->action);
+        free(r_node->protocol);
+        free(r_node->src_ip);
+        free(r_node->src_port);
+        free(r_node->dst_ip);
+        free(r_node->dst_port);
+
+        /* free pcre & content */
+        /* pcre_node_t *ptmp = r_node->pattern->pcre_node;
+        while (ptmp){
+            ptmp = ptmp->next;
+            free(r_node->pattern->pcre_node);
+            r_node->pattern->pcre_node = ptmp;
+        }
+        free(r_node->pattern->pcre_node);
+
+        c_node_t *ctmp = r_node->pattern->content_node;
+        while (ctmp){
+            ctmp = ctmp->next;
+            free(r_node->pattern->content_node);
+            r_node->pattern->content_node = ctmp;
+        }
+        free(r_node->pattern->content_node); */
+        free(r_node->pattern);
+
         free(r_node);
+
         r_node = next;
     }
     return;

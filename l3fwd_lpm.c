@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <getopt.h>
 #include <inttypes.h>
+#include <pthread.h>
 #include <rte_cycles.h>
 #include <rte_debug.h>
 #include <rte_ethdev.h>
@@ -43,6 +44,18 @@ struct ipv6_l3fwd_lpm_route {
     uint8_t if_out;
 };
 
+struct shared_vars_t {
+    int fd[2];
+    struct rte_mbuf *pkts_burst[MAX_PKT_BURST];
+    unsigned lcore_id;
+    uint64_t prev_tsc, diff_tsc, cur_tsc;
+    int i, nb_rx;
+    uint16_t portid;
+    uint8_t queueid;
+    struct lcore_conf *qconf;
+};
+
+/* Setup route table */
 static struct ipv4_l3fwd_lpm_route ipv4_l3fwd_lpm_route_array[] = {
     {IPv4(192, 168, 0, 0), 24, 0}, {IPv4(192, 168, 1, 0), 24, 1},
     {IPv4(3, 1, 1, 0), 24, 2},     {IPv4(4, 1, 1, 0), 24, 3},
@@ -175,6 +188,7 @@ lpm_get_dst_port_with_ipv4(const struct lcore_conf *qconf,
 #include "l3fwd_lpm.h"
 #endif
 
+
 /* main processing loop */
 int lpm_main_loop(__attribute__((unused)) void *dummy)
 {
@@ -262,6 +276,7 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
     return 0;
 }
 
+
 int lpm_main_loop_pipe(__attribute__((unused)) void *dummy)
 {
     struct rte_mbuf *pkts_burst[MAX_PKT_BURST];
@@ -271,7 +286,6 @@ int lpm_main_loop_pipe(__attribute__((unused)) void *dummy)
     uint16_t portid;
     uint8_t queueid;
     struct lcore_conf *qconf;
-
     const uint64_t drain_tsc =
         (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * BURST_TX_DRAIN_US;
 
@@ -346,12 +360,7 @@ int lpm_main_loop_pipe(__attribute__((unused)) void *dummy)
                 if (unlikely(nb_rx == 0))
                     continue;
                 /* printf("Receive packet from port %u\n", portid); */
-                gettimeofday(&capture_start, NULL);
 
-                /* Send capture_start */
-                if (write(fd_capture_to_analyze[1], &capture_start,
-                          sizeof(capture_start)) == -1)
-                    fprintf(stderr, "Write capture_start error.\n");
                 /* Send nb_rx */
                 if (write(fd_capture_to_analyze[1], &nb_rx, sizeof(nb_rx)) ==
                     -1)
@@ -364,13 +373,6 @@ int lpm_main_loop_pipe(__attribute__((unused)) void *dummy)
                 if (write(fd_capture_to_analyze[1], pkts_burst,
                           sizeof(pkts_burst)) == -1)
                     fprintf(stderr, "Write pkts_burst error.\n");
-
-                gettimeofday(&capture_end, NULL);
-
-                /* Send capture_start */
-                if (write(fd_capture_to_analyze[1], &capture_end,
-                          sizeof(capture_start)) == -1)
-                    fprintf(stderr, "Write capture_end error.\n");
             }
         }
         /* Kill child process */
@@ -383,8 +385,6 @@ int lpm_main_loop_pipe(__attribute__((unused)) void *dummy)
         /* close read end */
         close(fd_analyze_to_capture[0]);
 
-        struct timeval capture_start, capture_end;
-        struct timeval analyze_start, analyze_end;
 
         while (!force_quit) {
             /* TX burst queue drain */
@@ -401,10 +401,6 @@ int lpm_main_loop_pipe(__attribute__((unused)) void *dummy)
                 prev_tsc = cur_tsc;
             }
 
-            /* Get capture_start */
-            if (read(fd_capture_to_analyze[0], &capture_start,
-                     sizeof(capture_start)) == -1)
-                fprintf(stderr, "Read capture_start error.\n");
             /* Get nb_rx */
             if (read(fd_capture_to_analyze[0], &nb_rx, sizeof(nb_rx)) == -1)
                 fprintf(stderr, "Read nb_rx error.\n");
@@ -416,14 +412,8 @@ int lpm_main_loop_pipe(__attribute__((unused)) void *dummy)
                      sizeof(pkts_burst)) == -1)
                 fprintf(stderr, "read pkts_burst error.\n");
 
-            /* Get capture_end */
-            if (read(fd_capture_to_analyze[0], &capture_start,
-                     sizeof(capture_start)) == -1)
-                fprintf(stderr, "Read capture_start error.\n");
-
             /* printf("Receive %d pakcets from port_%u\n", nb_rx, portid); */
 
-            gettimeofday(&analyze_start, NULL);
             /* Create pcap header and process the packet. */
             for (i = 0; i < nb_rx; i++) {
                 char *data = rte_pktmbuf_mtod(pkts_burst[i], char *);
@@ -438,24 +428,176 @@ int lpm_main_loop_pipe(__attribute__((unused)) void *dummy)
                 ndpi_process_packet((u_char *) portid, &h,
                                     (const u_char *) data);
             }
-
-
             /* Forwarding packets */
             l3fwd_lpm_send_packets(nb_rx, pkts_burst, portid, qconf);
-
-            gettimeofday(&analyze_end, NULL);
-
-            dpiresults->capture_time.tv_sec +=
-                capture_end.tv_sec - capture_start.tv_sec;
-            dpiresults->capture_time.tv_usec +=
-                capture_end.tv_usec - capture_start.tv_usec;
-
-            dpiresults->analyze_time.tv_sec +=
-                analyze_end.tv_sec - analyze_start.tv_sec;
-            dpiresults->analyze_time.tv_usec +=
-                analyze_end.tv_usec - analyze_start.tv_usec;
         }
     }
+    return 0;
+}
+
+static struct pipe_vars_t {
+    struct rte_mbuf **pkts_burst;
+    int nb_rx;
+};
+/*
+ * Capture the packets then pass to analyze_module by pipe
+ */
+static void *capture_module(void *arguments)
+{
+    struct shared_vars_t *shared_vars = (struct shared_vars_t *) arguments;
+    struct pipe_vars_t buf;
+    int *fd = shared_vars->fd;
+    struct timeval capture_start, capture_end;
+
+    const uint64_t drain_tsc =
+        (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * BURST_TX_DRAIN_US;
+    shared_vars->prev_tsc = 0;
+
+    int i, ret;
+    gettimeofday(&capture_start, NULL);
+    while (!force_quit) {
+        shared_vars->cur_tsc = rte_rdtsc();
+
+        /* TX burst queue drain */
+        shared_vars->diff_tsc = shared_vars->cur_tsc - shared_vars->prev_tsc;
+        if (unlikely(shared_vars->diff_tsc > drain_tsc)) {
+            for (i = 0; i < shared_vars->qconf->n_tx_port; ++i) {
+                shared_vars->portid = shared_vars->qconf->tx_port_id[i];
+                if (shared_vars->qconf->tx_mbufs[shared_vars->portid].len == 0)
+                    continue;
+                send_burst(
+                    shared_vars->qconf,
+                    shared_vars->qconf->tx_mbufs[shared_vars->portid].len,
+                    shared_vars->portid);
+                shared_vars->qconf->tx_mbufs[shared_vars->portid].len = 0;
+            }
+            shared_vars->prev_tsc = shared_vars->cur_tsc;
+        }
+
+        for (i = 0; i < shared_vars->qconf->n_rx_queue; ++i) {
+            shared_vars->portid = shared_vars->qconf->rx_queue_list[i].port_id;
+            shared_vars->queueid =
+                shared_vars->qconf->rx_queue_list[i].queue_id;
+            shared_vars->nb_rx =
+                rte_eth_rx_burst(shared_vars->portid, shared_vars->queueid,
+                                 shared_vars->pkts_burst, MAX_PKT_BURST);
+
+            if (unlikely(shared_vars->nb_rx == 0))
+                continue;
+
+
+            buf.nb_rx = shared_vars->nb_rx;
+            buf.pkts_burst = shared_vars->pkts_burst;
+
+            ret = write(fd[1], &buf, sizeof(buf));
+            if (ret == -1)
+                fprintf(stderr, "Write error.\n");
+            /* printf("[Capturer] Write buf = %d\n", buf.nb_rx); */
+        }
+    }
+
+    gettimeofday(&capture_end, NULL);
+    dpiresults[shared_vars->portid].capture_time.tv_sec +=
+        capture_end.tv_sec - capture_start.tv_sec;
+    dpiresults[shared_vars->portid].capture_time.tv_usec +=
+        capture_end.tv_usec - capture_start.tv_usec;
+
+    close(fd[1]);
+    printf("[lcore_%u] Capture module closed.\n", shared_vars->lcore_id);
+    pthread_exit(NULL);
+}
+
+/*
+ * Analyze packets from capture_module
+ */
+static void *analyze_module(void *arguments)
+{
+    struct shared_vars_t *shared_vars = (struct shared_vars_t *) arguments;
+    int *fd = shared_vars->fd, ret, i;
+    struct pipe_vars_t buf;
+    struct timeval analyze_start, analyze_end;
+
+    gettimeofday(&analyze_start, NULL);
+    while (!force_quit) {
+        /* Analyzer receives packets */
+        ret = read(fd[0], &buf, sizeof(buf));
+        if (ret == -1)
+            fprintf(stderr, "Write error.\n");
+        /* printf("[Analyzer] Read buf = %d\n", buf.nb_rx); */
+
+        for (i = 0; i < buf.nb_rx; i++) {
+            char *data = rte_pktmbuf_mtod(buf.pkts_burst[i], char *);
+            int pkt_len = rte_pktmbuf_pkt_len(buf.pkts_burst[i]);
+
+            /*Get pcap format*/
+            struct pcap_pkthdr h;
+            h.len = h.caplen = pkt_len;
+            gettimeofday(&h.ts, NULL);
+
+            /*Call the function to process the packets*/
+            ndpi_process_packet((u_char *) shared_vars->portid, &h,
+                                (const u_char *) data);
+        }
+        /* Forwarding packets */
+        l3fwd_lpm_send_packets(buf.nb_rx, buf.pkts_burst, shared_vars->portid,
+                               shared_vars->qconf);
+    }
+    /* Analysis complete and put packet to the tx_queues */
+
+    gettimeofday(&analyze_end, NULL);
+    dpiresults[shared_vars->portid].analyze_time.tv_sec +=
+        analyze_end.tv_sec - analyze_start.tv_sec;
+
+    dpiresults[shared_vars->portid].analyze_time.tv_usec +=
+        analyze_end.tv_usec - analyze_start.tv_usec;
+
+    close(fd[0]);
+    printf("[lcore_%u] Analyze module closed.\n", shared_vars->lcore_id);
+    pthread_exit(NULL);
+}
+
+static void forward_module() {}
+
+int lpm_main_loop_thread_pipe(__attribute__((unused)) void *dummy)
+{
+    int i;
+    struct shared_vars_t shared_vars;
+
+    shared_vars.lcore_id = rte_lcore_id();
+    shared_vars.qconf = &lcore_conf[shared_vars.lcore_id];
+
+    if (shared_vars.qconf->n_rx_queue == 0) {
+        RTE_LOG(INFO, L3FWD, "lcore %u has nothing to do\n",
+                shared_vars.lcore_id);
+        return 0;
+    }
+
+    RTE_LOG(INFO, L3FWD, "entering main loop on lcore %u\n",
+            shared_vars.lcore_id);
+
+    for (i = 0; i < shared_vars.qconf->n_rx_queue; i++) {
+        shared_vars.portid = shared_vars.qconf->rx_queue_list[i].port_id;
+        shared_vars.queueid = shared_vars.qconf->rx_queue_list[i].queue_id;
+        RTE_LOG(INFO, L3FWD, " -- lcoreid=%u portid=%u rxqueueid=%hhu\n",
+                shared_vars.lcore_id, shared_vars.portid, shared_vars.queueid);
+    }
+
+
+    /* pipe init */
+    if (pipe(shared_vars.fd) < 0) {
+        fprintf(stderr, "Pipe init error.\n");
+        exit(1);
+    }
+
+    /* Create threads */
+    pthread_t t1, t2;
+
+    pthread_create(&t1, NULL, capture_module, (void *) &shared_vars);
+    pthread_create(&t2, NULL, analyze_module, (void *) &shared_vars);
+
+    pthread_join(t1, NULL);
+    pthread_join(t2, NULL);
+
     return 0;
 }
 
@@ -492,10 +634,10 @@ void setup_lpm(const int socketid)
                           ipv4_l3fwd_lpm_route_array[i].if_out);
 
         if (ret < 0) {
-            rte_exit(
-                EXIT_FAILURE,
-                "Unable to add entry %u to the l3fwd LPM table on socket %d\n",
-                i, socketid);
+            rte_exit(EXIT_FAILURE,
+                     "Unable to add entry %u to the l3fwd LPM table on "
+                     "socket %d\n",
+                     i, socketid);
         }
 
         printf("LPM: Adding route 0x%08x / %d (%d)\n",
@@ -530,10 +672,10 @@ void setup_lpm(const int socketid)
                            ipv6_l3fwd_lpm_route_array[i].if_out);
 
         if (ret < 0) {
-            rte_exit(
-                EXIT_FAILURE,
-                "Unable to add entry %u to the l3fwd LPM table on socket %d\n",
-                i, socketid);
+            rte_exit(EXIT_FAILURE,
+                     "Unable to add entry %u to the l3fwd LPM table on "
+                     "socket %d\n",
+                     i, socketid);
         }
 
         printf("LPM: Adding route %s / %d (%d)\n", "IPV6",

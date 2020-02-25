@@ -11,8 +11,9 @@
  * checked.
  */
 typedef struct c_node_t {
-    struct c_node_t *next_content;
+    struct c_node_t *next;
     char *content;
+    struct c_node_t *next_content;
 } c_node_t;
 
 /*
