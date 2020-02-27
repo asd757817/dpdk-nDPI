@@ -1,4 +1,5 @@
 #include "ndpi_detection.h"
+#include <unistd.h>
 
 int nDPI_LogLevel = 0;
 
@@ -1708,15 +1709,10 @@ void printResults(u_int64_t processing_time_usec, u_int64_t setup_time_usec)
 
     /* Print time info */
     printf("\n\nTime info:\n");
-    float c_time, a_time;
     printf("\t%-20s%-25s%-20s\n", "lcore", "Capturer", "Analyzer");
     for (unsigned i = 0; i <= 3; i++) {
-        c_time = (dpiresults[i].capture_time.tv_sec * 1000000 +
-                  dpiresults[i].capture_time.tv_usec);
-        a_time = (dpiresults[i].analyze_time.tv_sec * 1000000 +
-                  dpiresults[i].analyze_time.tv_usec);
-
-        printf("\t%-20u%-25f%-20f\n", i, c_time / 1000000, a_time / 1000000);
+        printf("\t%-20u%-25f%-20f\n", i, dpiresults[i].capture_time / 1000000,
+               dpiresults[i].analyze_time / 1000000);
     }
 
 free_stats:

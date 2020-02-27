@@ -156,7 +156,7 @@ struct malicious_packet {
     struct malicious_packet *next;
 };
 struct dpi_results{
-    struct timeval duration_time, capture_time, analyze_time;
+    float duration_time, capture_time, analyze_time;
     unsigned long total_rx_packets, total_rtx_packets, total_bytes, total_malicious;
     struct malicious_packet *malicous_head;
 };

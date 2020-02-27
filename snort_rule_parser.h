@@ -21,6 +21,7 @@ typedef struct c_node_t {
  * For now, only store msg, content and pcre.
  */
 typedef struct pcre_node_t {
+    char *msg;
     struct pcre_node_t *next_pcre_node;
     char *rule;
     pcre *re;

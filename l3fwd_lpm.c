@@ -439,6 +439,7 @@ static struct pipe_vars_t {
     struct rte_mbuf **pkts_burst;
     int nb_rx;
 };
+
 /*
  * Capture the packets then pass to analyze_module by pipe
  */
@@ -454,7 +455,6 @@ static void *capture_module(void *arguments)
     shared_vars->prev_tsc = 0;
 
     int i, ret;
-    gettimeofday(&capture_start, NULL);
     while (!force_quit) {
         shared_vars->cur_tsc = rte_rdtsc();
 
@@ -485,22 +485,22 @@ static void *capture_module(void *arguments)
             if (unlikely(shared_vars->nb_rx == 0))
                 continue;
 
+            gettimeofday(&capture_start, NULL);
 
             buf.nb_rx = shared_vars->nb_rx;
             buf.pkts_burst = shared_vars->pkts_burst;
 
+            gettimeofday(&capture_end, NULL);
             ret = write(fd[1], &buf, sizeof(buf));
             if (ret == -1)
                 fprintf(stderr, "Write error.\n");
             /* printf("[Capturer] Write buf = %d\n", buf.nb_rx); */
+            dpiresults[shared_vars->portid].capture_time +=
+                (capture_end.tv_sec - capture_start.tv_sec) * 1000000 +
+                (capture_end.tv_usec - capture_start.tv_usec);
         }
     }
 
-    gettimeofday(&capture_end, NULL);
-    dpiresults[shared_vars->portid].capture_time.tv_sec +=
-        capture_end.tv_sec - capture_start.tv_sec;
-    dpiresults[shared_vars->portid].capture_time.tv_usec +=
-        capture_end.tv_usec - capture_start.tv_usec;
 
     close(fd[1]);
     printf("[lcore_%u] Capture module closed.\n", shared_vars->lcore_id);
@@ -517,7 +517,6 @@ static void *analyze_module(void *arguments)
     struct pipe_vars_t buf;
     struct timeval analyze_start, analyze_end;
 
-    gettimeofday(&analyze_start, NULL);
     while (!force_quit) {
         /* Analyzer receives packets */
         ret = read(fd[0], &buf, sizeof(buf));
@@ -525,6 +524,7 @@ static void *analyze_module(void *arguments)
             fprintf(stderr, "Write error.\n");
         /* printf("[Analyzer] Read buf = %d\n", buf.nb_rx); */
 
+        gettimeofday(&analyze_start, NULL);
         for (i = 0; i < buf.nb_rx; i++) {
             char *data = rte_pktmbuf_mtod(buf.pkts_burst[i], char *);
             int pkt_len = rte_pktmbuf_pkt_len(buf.pkts_burst[i]);
@@ -541,15 +541,13 @@ static void *analyze_module(void *arguments)
         /* Forwarding packets */
         l3fwd_lpm_send_packets(buf.nb_rx, buf.pkts_burst, shared_vars->portid,
                                shared_vars->qconf);
+        gettimeofday(&analyze_end, NULL);
+        dpiresults[shared_vars->portid].analyze_time +=
+            (analyze_end.tv_sec - analyze_start.tv_sec) * 1000000 +
+            (analyze_end.tv_usec - analyze_start.tv_usec);
     }
     /* Analysis complete and put packet to the tx_queues */
 
-    gettimeofday(&analyze_end, NULL);
-    dpiresults[shared_vars->portid].analyze_time.tv_sec +=
-        analyze_end.tv_sec - analyze_start.tv_sec;
-
-    dpiresults[shared_vars->portid].analyze_time.tv_usec +=
-        analyze_end.tv_usec - analyze_start.tv_usec;
 
     close(fd[0]);
     printf("[lcore_%u] Analyze module closed.\n", shared_vars->lcore_id);

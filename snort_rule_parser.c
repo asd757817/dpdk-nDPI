@@ -22,6 +22,7 @@ static struct pcre_node_t *pcre_node_new()
     if (node) {
         node->next_pcre_node = NULL;
         node->rule = NULL;
+        node->msg = NULL;
         node->re = NULL;
         node->next = NULL;
     }
@@ -311,8 +312,10 @@ static void parse_rule(char *str)
     rule_list_insert(snort_rule_q, rule_node);
 
     /* Insert pcre_node into check module */
-    if (pattern_node->pcre_node)
+    if (pattern_node->pcre_node) {
+        pattern_node->pcre_node->msg = pattern_node->msg;
         check_module_add_node(buf, pattern_node->pcre_node);
+    }
 
     return;
 }

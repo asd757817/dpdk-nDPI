@@ -128,10 +128,29 @@ static patterns_leaf_t *find_patterns(char *protocol,
     return dp;
 }
 
-bool pcre_search(uint16_t protocol, uint16_t sport, uint16_t dport, char *text)
+bool pcre_search(uint8_t l3_protocol,
+                 uint16_t app_protocol,
+                 uint16_t sport,
+                 uint16_t dport,
+                 char *text)
 {
     /* printf("%u %u %u %s\n", protocol, sport, dport, text); */
-    patterns_leaf_t *dport_leaf = find_patterns("tcp", "any", "any");
+    patterns_leaf_t *dport_leaf;
+
+    /*
+     * To be finished.
+     * Find all leaves and collect them in a queue.
+     * Traverse the queue and search for the patterns.
+     */
+
+    switch (app_protocol) {
+    case 7:
+        dport_leaf = find_patterns("tcp", "any", "80");
+        break;
+    default:
+        dport_leaf = find_patterns("tcp", "any", "any");
+        break;
+    }
 
     pcre_node_t *pcre_node = (pcre_node_t *) dport_leaf->ptr, *next;
 
@@ -149,37 +168,12 @@ bool pcre_search(uint16_t protocol, uint16_t sport, uint16_t dport, char *text)
             ret = pcre_exec(re, NULL, text, strlen(text), 0, 0, ovector, 100);
         }
         if (ret >= 0) {
-            /*printf("Alert: %s\n", rule_node->pattern->msg);*/
-            /*printf("Rule is: %s\n", pcre_node->rule);*/
+            printf("Alert: %s\nMatched rule is:%s\n\n", pcre_node->msg,
+                   pcre_node->rule);
             return 1;
         } else {
             pcre_node = pcre_node->next;
         }
     }
     return 0;
-    /* Search all nodes in the list */
-
-    /* while (rule_node) { */
-    /* if (rule_node->pattern->pcre_node) { */
-    /* pcre_node_t *pcre_node = rule_node->pattern->pcre_node; */
-
-    /* if (strcmp(rule_node->protocol, "tcp") == 0 && */
-    /* strcmp(rule_node->dst_ip, "$HTTP_PORTS") == 0) { */
-    /* pcre *re = pcre_node->re; */
-    /* const char *error; */
-    /* int ret, erroffest, ovector[100], workspace[100]; */
-    /* char buf[100]; */
-
-    /* int ret = pcre_dfa_exec(re, NULL, text, strlen(text), 0,
-       0, ovector, 100, workspace, 100); */
-    /* ret = */
-    /* pcre_exec(re, NULL, text, strlen(text), 0, 0, ovector, 100); */
-
-    /* int r = pcre_copy_substring(text, ovector, 100, 0, buf,
-    100); printf("Rule:%s found, the pattern is %s\n",
-           rule_node->pattern->pcre_node->rule, buf); */
-
-    /* [> Found && multi-statge search <] */
 }
-/* rule_node = rule_node->next; */
-/* } */

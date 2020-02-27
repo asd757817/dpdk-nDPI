@@ -1556,24 +1556,14 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow *workflow,
     }
     /* Check payload if payload_len > 0  */
     if (payload_len > 0) {
-        /*
-           If the packet is a encrypted packet, then decrypt it
-           This is too difficult...
-        */
-
-        /* if (flow->detected_protocol.app_protocol == 91) {
-
-            char *buf = malloc(sizeof(char) * (payload_len + 1));
-            for (int i = 0; i < payload_len; i++){
-                sprintf(buf, "%c", payload[i]);
-            }
-        } */
-
         /* Call pattern search */
-        if (pcre_search(flow->detected_protocol.app_protocol, sport, dport, payload) == 0)
-            printf("Not found!\n");
+        if (pcre_search(proto, flow->detected_protocol.app_protocol, sport, dport,
+                        payload) == 0)
+            ;
+        /* printf("Not found!\n"); */
         else
-            printf("Pattern Found!\n");
+            ;
+        /* printf("Pattern Found!\n"); */
     }
 
     return (flow->detected_protocol);
