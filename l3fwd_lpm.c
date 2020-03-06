@@ -455,6 +455,7 @@ static void *capture_module(void *arguments)
     shared_vars->prev_tsc = 0;
 
     int i, ret;
+
     while (!force_quit) {
         shared_vars->cur_tsc = rte_rdtsc();
 
@@ -546,9 +547,8 @@ static void *analyze_module(void *arguments)
             (analyze_end.tv_sec - analyze_start.tv_sec) * 1000000 +
             (analyze_end.tv_usec - analyze_start.tv_usec);
     }
+
     /* Analysis complete and put packet to the tx_queues */
-
-
     close(fd[0]);
     printf("[lcore_%u] Analyze module closed.\n", shared_vars->lcore_id);
     pthread_exit(NULL);
@@ -587,12 +587,51 @@ int lpm_main_loop_thread_pipe(__attribute__((unused)) void *dummy)
         exit(1);
     }
 
-    /* Create threads */
+    /* Declaration */
+    cpu_set_t cpuset;
     pthread_t t1, t2;
+    int ret;
 
+    /* Create threads */
     pthread_create(&t1, NULL, capture_module, (void *) &shared_vars);
     pthread_create(&t2, NULL, analyze_module, (void *) &shared_vars);
 
+    /* Assign capture_module */
+    CPU_ZERO(&cpuset);
+    CPU_SET(shared_vars.lcore_id, &cpuset); // add present lcore to cpuset
+    ret = pthread_setaffinity_np(t1, sizeof(cpu_set_t), &cpuset);
+    if (ret != 0)
+        fprintf(stderr, "set cpu_affinity error!\n");
+
+    /* Assign analyze_module */
+    CPU_ZERO(&cpuset);
+    CPU_SET(2 + shared_vars.lcore_id, &cpuset); // add present lcore to cpuset
+    ret = pthread_setaffinity_np(t2, sizeof(cpu_set_t), &cpuset);
+    if (ret != 0)
+        fprintf(stderr, "set cpu_affinity error!\n");
+
+    /* Check cpu_affinity results */
+    int lcore_capture, lcore_analyze;
+
+    ret = pthread_getaffinity_np(t1, sizeof(cpuset), &cpuset);
+    if (ret != 0)
+        fprintf(stderr, "get cpuset error!\n");
+    for (int i = 0;i < CPU_SETSIZE; i++)
+        if (CPU_ISSET(i, &cpuset))
+            lcore_capture = i;
+
+    ret = pthread_getaffinity_np(t2, sizeof(cpuset), &cpuset);
+    if (ret != 0)
+        fprintf(stderr, "get cpuset error!\n");
+    for (int i = 0;i < CPU_SETSIZE; i++)
+        if (CPU_ISSET(i, &cpuset))
+            lcore_analyze = i;
+    
+    printf("lcore: %u\n", shared_vars.lcore_id);
+    printf("capture_module is on lcore:%d \nanalyze_module is on lcore :%d\n",
+           lcore_capture, lcore_analyze);
+
+    /* pthread join */
     pthread_join(t1, NULL);
     pthread_join(t2, NULL);
 
