@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "pattern_matching.h"
 #include "snort_rule_parser.h"
@@ -132,9 +133,11 @@ bool pcre_search(uint8_t l3_protocol,
                  uint16_t app_protocol,
                  uint16_t sport,
                  uint16_t dport,
-                 char *text)
+                 char *payload)
 {
-    /* printf("%u %u %u %s\n", protocol, sport, dport, text); */
+    /* printf("%u %u %u %s\n", protocol, sport, dport, target); */
+
+    /* root of the dataset */
     patterns_leaf_t *dport_leaf;
 
     /*
@@ -152,24 +155,25 @@ bool pcre_search(uint8_t l3_protocol,
         break;
     }
 
+    /* Start from root, traverse all leaves and check match */
     pcre_node_t *pcre_node = (pcre_node_t *) dport_leaf->ptr, *next;
-
     while (pcre_node) {
-        pcre *re = pcre_node->re;
+        pcre *expression = pcre_node->re;
         const char *error;
         int ret, erroffest, ovector[100], workspace[100];
         char buf[100];
 
-        ret = pcre_exec(re, NULL, text, strlen(text), 0, 0, ovector, 100);
-
+        ret = pcre_exec(expression, NULL, payload, strlen(payload), 0, 0,
+                        ovector, 100);
+        /* Match for all stages means hits the rule */
         while ((ret >= 0) && (pcre_node->next_pcre_node != NULL)) {
             next = pcre_node->next_pcre_node;
             re = next->re;
-            ret = pcre_exec(re, NULL, text, strlen(text), 0, 0, ovector, 100);
+            ret = pcre_exec(re, NULL, payload, strlen(payload), 0, 0, ovector,
+                            100);
         }
         if (ret >= 0) {
-            printf("Alert: %s\nMatched rule is:%s\n\n", pcre_node->msg,
-                   pcre_node->rule);
+            printf("[Alert]: Detecting %s\n", pcre_node->msg);
             return 1;
         } else {
             pcre_node = pcre_node->next;

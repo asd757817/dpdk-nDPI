@@ -16,7 +16,7 @@
 #endif
 
 #define MAX_PKT_BURST 32
-#define BURST_TX_DRAIN_US 100 /* TX drain every ~100us */
+#define BURST_TX_DRAIN_US 50 /* TX drain every ~100us */
 
 #define MAX_RX_QUEUE_PER_LCORE 16
 

@@ -78,13 +78,15 @@ void ndpi_process_packet(u_char *args,
                          const u_char *packet)
 {
     struct ndpi_proto p;
-    u_int16_t thread_id = (u_int16_t) 0;  //*((u_int16_t *) args);
+    /* u_int16_t thread_id = (u_int16_t) 0;   */
+    u_int16_t thread_id = *((u_int16_t *) args);
 
 
     /* allocate an exact size buffer to check overflows */
     uint8_t *packet_checked = malloc(header->caplen);
 
     memcpy(packet_checked, packet, header->caplen);
+
 
     p = ndpi_workflow_process_packet(ndpi_thread_info[thread_id].workflow,
                                      header, packet_checked);
@@ -180,7 +182,7 @@ void ndpi_process_packet(u_char *args,
     }
 
     /* check for buffer changes */
-    if (memcmp(packet, packet_checked, header->caplen) != 0)
+    if (memcmp(packet, packet_checked, header->caplen) != 0) {
         printf(
             "INTERNAL ERROR: ingress packet was modified by nDPI: this should "
             "not happen [thread_id=%u, packetId=%lu, caplen=%u]\n",
@@ -188,6 +190,9 @@ void ndpi_process_packet(u_char *args,
             (unsigned long) ndpi_thread_info[thread_id]
                 .workflow->stats.raw_packet_count,
             header->caplen);
+        getchar();
+    }
+    free(packet_checked);
 
     if ((pcap_end.tv_sec - pcap_start.tv_sec) > pcap_analysis_duration) {
         int i;
@@ -224,7 +229,6 @@ void ndpi_process_packet(u_char *args,
        Leave the free as last statement to avoid crashes when
        ndpi_detection_giveup() is called above by printResults()
        */
-    free(packet_checked);
 }
 
 /*
@@ -1709,11 +1713,19 @@ void printResults(u_int64_t processing_time_usec, u_int64_t setup_time_usec)
 
     /* Print time info */
     printf("\n\nTime info:\n");
-    printf("\t%-20s%-25s%-20s\n", "lcore", "Capturer", "Analyzer");
+    printf("\t%-20s%-25s%-20s%-20s\n", "lcore", "Capturer", "Analyzer",
+           "Total");
     for (unsigned i = 0; i <= 3; i++) {
-        printf("\t%-20u%-25f%-20f\n", i, dpiresults[i].capture_time / 1000000,
-               dpiresults[i].analyze_time / 1000000);
+        printf("\t%-20u%-25f%-20f%-20f\n", i,
+               dpiresults[i].capture_time / 1000000,
+               dpiresults[i].analyze_time / 1000000,
+               dpiresults[i].total_time / 1000000);
     }
+    for (unsigned i = 0; i <= 3; i++) {
+        printf("\n\tlcore_%u recieve %lu packets (%lu bytes)\n", i,
+               dpiresults[i].total_rx_packets, dpiresults[i].total_bytes);
+    }
+
 
 free_stats:
     if (scannerHosts) {

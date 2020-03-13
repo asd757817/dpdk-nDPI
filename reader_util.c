@@ -1556,14 +1556,8 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow *workflow,
     }
     /* Check payload if payload_len > 0  */
     if (payload_len > 0) {
-        /* Call pattern search */
-        if (pcre_search(proto, flow->detected_protocol.app_protocol, sport, dport,
-                        payload) == 0)
-            ;
-        /* printf("Not found!\n"); */
-        else
-            ;
-        /* printf("Pattern Found!\n"); */
+        int ret = pcre_search(proto, flow->detected_protocol.app_protocol,
+                              sport, dport, payload);
     }
 
     return (flow->detected_protocol);

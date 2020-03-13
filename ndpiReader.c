@@ -1433,10 +1433,8 @@ static void parseOptions(int argc, char **argv)
 #endif
 
 #ifdef USE_DPDK
-    {
-        int ret = dpdk_l3fwd_init(argc, argv);
-        argc -= ret, argv += ret;
-    }
+    int ret = dpdk_l3fwd_init(argc, argv);
+    argc -= ret, argv += ret;
 #endif
 
     while ((opt = getopt_long(
@@ -1678,10 +1676,6 @@ static void parseOptions(int argc, char **argv)
 #endif
 }
 
-/* ********************************** */
-
-/* ********************************** */
-
 #if 0
 /**
  * @brief A faster replacement for inet_ntoa().
@@ -1714,126 +1708,6 @@ char* intoaV4(u_int32_t addr, char* buf, u_int16_t bufLen) {
 }
 #endif
 
-/* ********************************** */
-
-
-/* ********************************** */
-
-
-/* ********************************** */
-
-/**
- * @brief Print the flow
- */
-
-/* ********************************** */
-
-
-/* ********************************** */
-
-/* *********************************************** */
-
-/* *********************************************** */
-
-/* *********************************************** */
-
-
-
-/* *********************************************** */
-
-
-/* *********************************************** */
-
-/* *********************************************** */
-
-/* *********************************************** */
-
-
-/* *********************************************** */
-
-
-/* ***************************************************** */
-
-/* *********************************************** */
-/* *********************************************** */
-
-
-/* *********************************************** */
-/* implementation of:
- * https://jeroen.massar.ch/presentations/files/FloCon2010-TopK.pdf
- *
- * if(table1.size < max1 || acceptable){
- *    create new element and add to the table1
- *    if(table1.size > max2) {
- *      cut table1 back to max1
- *      merge table 1 to table2
- *      if(table2.size > max1)
- *        cut table2 back to max1
- *    }
- * }
- * else
- *   update table1
- */
-
-/* *********************************************** */
-
-/* *********************************************** */
-
-/* *********************************************** */
-
-/* *********************************************** */
-
-/**
- * @brief On Protocol Discover - demo callback
- */
-
-/* *********************************************** */
-
-#if 0
-/**
- * @brief Print debug
- */
-static void debug_printf(u_int32_t protocol, void *id_struct,
-			 ndpi_log_level_t log_level,
-			 const char *format, ...) {
-  va_list va_ap;
-#ifndef WIN32
-  struct tm result;
-#endif
-
-  if(log_level <= nDPI_LogLevel) {
-    char buf[8192], out_buf[8192];
-    char theDate[32];
-    const char *extra_msg = "";
-    time_t theTime = time(NULL);
-
-    va_start (va_ap, format);
-
-    if(log_level == NDPI_LOG_ERROR)
-      extra_msg = "ERROR: ";
-    else if(log_level == NDPI_LOG_TRACE)
-      extra_msg = "TRACE: ";
-    else
-      extra_msg = "DEBUG: ";
-
-    memset(buf, 0, sizeof(buf));
-    strftime(theDate, 32, "%d/%b/%Y %H:%M:%S", localtime_r(&theTime,&result) );
-    vsnprintf(buf, sizeof(buf)-1, format, va_ap);
-
-    snprintf(out_buf, sizeof(out_buf), "%s %s%s", theDate, extra_msg, buf);
-    printf("%s", out_buf);
-    fflush(stdout);
-  }
-
-  va_end(va_ap);
-}
-#endif
-
-/* *********************************************** */
-
-
-/* *********************************************** */
-
 /**
  * @brief End of detection and free flow
  */
@@ -1841,22 +1715,6 @@ static void terminateDetection(u_int16_t thread_id)
 {
     ndpi_workflow_free(ndpi_thread_info[thread_id].workflow);
 }
-
-/* *********************************************** */
-
-/* *********************************************** */
-
-/* *********************************************** */
-
-/* *********************************************** */
-
-/* *********************************************** */
-
-/* *********************************************** */
-
-/* *********************************************** */
-
-/* *********************************************** */
 
 /**
  * @brief Force a pcap_dispatch() or pcap_loop() call to return
@@ -2059,34 +1917,6 @@ void *processing_thread(void *_thread_id)
         if ((!quiet_mode))
         printf("Running thread %ld...\n", thread_id);
 
-#ifdef USE_DPDK
-    while (dpdk_run_capture) {
-        struct rte_mbuf *bufs[BURST_SIZE];
-        u_int16_t num = rte_eth_rx_burst(dpdk_port_id, 0, bufs, BURST_SIZE);
-        u_int i;
-
-        if (num == 0) {
-            usleep(1);
-            continue;
-        }
-
-        for (i = 0; i < PREFETCH_OFFSET && i < num; i++)
-            rte_prefetch0(rte_pktmbuf_mtod(bufs[i], void *));
-
-        for (i = 0; i < num; i++) {
-            char *data = rte_pktmbuf_mtod(bufs[i], char *);
-            int len = rte_pktmbuf_pkt_len(bufs[i]);
-            struct pcap_pkthdr h;
-
-            h.len = h.caplen = len;
-            gettimeofday(&h.ts, NULL);
-
-            ndpi_process_packet((u_char *) &thread_id, &h,
-                                (const u_char *) data);
-            rte_pktmbuf_free(bufs[i]);
-        }
-    }
-#else
 pcap_loop:
     runPcapLoop(thread_id);
 
@@ -2102,8 +1932,6 @@ pcap_loop:
             goto pcap_loop;
         }
     }
-#endif
-
     return NULL;
 }
 
@@ -2111,7 +1939,6 @@ pcap_loop:
 void test_lib()
 {
     u_int64_t processing_time_usec, setup_time_usec;
-
 #ifdef USE_DPDK
     uint16_t portid;
     unsigned lcore_id;
@@ -2124,7 +1951,7 @@ void test_lib()
         setupDetection(portid, cap);
     }
 
-    gettimeofday(&begin, NULL); // program startup_time
+    gettimeofday(&begin, NULL);  // program startup_time
 
     /* Launch per-lcore init on every lcore */
     rte_eal_mp_remote_launch(l3fwd_lkp.main_loop, NULL, CALL_MASTER);
@@ -2147,7 +1974,7 @@ void test_lib()
     }
     printf("Bye...\n");
 
-    gettimeofday(&end, NULL); // program close_time
+    gettimeofday(&end, NULL);  // program close_time
     /* Calculate the running time of nDPI */
     processing_time_usec = end.tv_sec * 1000000 + end.tv_usec -
                            (begin.tv_sec * 1000000 + begin.tv_usec);

@@ -44,16 +44,19 @@ struct ipv6_l3fwd_lpm_route {
     uint8_t if_out;
 };
 
-struct shared_vars_t {
+static struct shared_vars_t {
     int fd[2];
-    struct rte_mbuf *pkts_burst[MAX_PKT_BURST];
     unsigned lcore_id;
-    uint64_t prev_tsc, diff_tsc, cur_tsc;
-    int i, nb_rx;
     uint16_t portid;
     uint8_t queueid;
     struct lcore_conf *qconf;
-};
+    struct timeval total_start, total_end;
+} shared_vars_t;
+
+static struct pipe_vars_t {
+    struct rte_mbuf *pkts_burst[MAX_PKT_BURST];
+    int nb_rx;
+} pipe_vars_t;
 
 /* Setup route table */
 static struct ipv4_l3fwd_lpm_route ipv4_l3fwd_lpm_route_array[] = {
@@ -199,7 +202,9 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
     uint16_t portid;
     uint8_t queueid;
     struct lcore_conf *qconf;
+    struct timeval total_start, total_end;
 
+    total_start.tv_sec = 0, total_start.tv_usec = 0;
     const uint64_t drain_tsc =
         (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * BURST_TX_DRAIN_US;
 
@@ -249,30 +254,39 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
             if (unlikely(nb_rx == 0))
                 continue;
 
-            /* printf("Receive packet from port %u\n", portid); */
-
+            dpiresults[portid].total_rx_packets += nb_rx;
             /* Create pcap header and process the packet. */
             for (i = 0; i < nb_rx; i++) {
                 char *data = rte_pktmbuf_mtod(pkts_burst[i], char *);
                 int pkt_len = rte_pktmbuf_pkt_len(pkts_burst[i]);
 
+                dpiresults[portid].total_bytes += pkt_len;
                 /* Get pcap format */
                 struct pcap_pkthdr h;
                 h.len = h.caplen = pkt_len;
                 gettimeofday(&h.ts, NULL);
 
+                if (total_start.tv_sec == 0) {
+                    gettimeofday(&total_start, NULL);
+                }
+
                 /* Call the function to process the packets */
-                ndpi_process_packet((u_char *) portid, &h,
+                ndpi_process_packet((u_char *) &portid, &h,
                                     (const u_char *) data);
             }
 #if defined RTE_ARCH_X86 || defined RTE_MACHINE_CPUFLAG_NEON || \
     defined RTE_ARCH_PPC_64
             l3fwd_lpm_send_packets(nb_rx, pkts_burst, portid, qconf);
+            gettimeofday(&total_end, NULL);
 #else
             l3fwd_lpm_no_opt_send_packets(nb_rx, pkts_burst, portid, qconf);
+            gettimeofday(&total_end, NULL);
 #endif /* X86 */
         }
     }
+    dpiresults[portid].total_time +=
+        (total_end.tv_sec - total_start.tv_sec) * 1000000 +
+        (total_end.tv_usec - total_start.tv_usec);
     return 0;
 }
 
@@ -286,6 +300,7 @@ int lpm_main_loop_pipe(__attribute__((unused)) void *dummy)
     uint16_t portid;
     uint8_t queueid;
     struct lcore_conf *qconf;
+    struct pipe_vars_t buf;
     const uint64_t drain_tsc =
         (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * BURST_TX_DRAIN_US;
 
@@ -361,6 +376,8 @@ int lpm_main_loop_pipe(__attribute__((unused)) void *dummy)
                     continue;
                 /* printf("Receive packet from port %u\n", portid); */
 
+                gettimeofday(&capture_start, NULL);
+                buf.nb_rx = nb_rx;
                 /* Send nb_rx */
                 if (write(fd_capture_to_analyze[1], &nb_rx, sizeof(nb_rx)) ==
                     -1)
@@ -373,6 +390,11 @@ int lpm_main_loop_pipe(__attribute__((unused)) void *dummy)
                 if (write(fd_capture_to_analyze[1], pkts_burst,
                           sizeof(pkts_burst)) == -1)
                     fprintf(stderr, "Write pkts_burst error.\n");
+                gettimeofday(&capture_end, NULL);
+
+                dpiresults[portid].capture_time +=
+                    (capture_end.tv_sec - capture_start.tv_sec) * 1000000 +
+                    (capture_end.tv_usec - capture_start.tv_usec);
             }
         }
         /* Kill child process */
@@ -384,7 +406,7 @@ int lpm_main_loop_pipe(__attribute__((unused)) void *dummy)
         close(fd_capture_to_analyze[1]);
         /* close read end */
         close(fd_analyze_to_capture[0]);
-
+        struct timeval analyze_start, analyze_end;
 
         while (!force_quit) {
             /* TX burst queue drain */
@@ -412,6 +434,7 @@ int lpm_main_loop_pipe(__attribute__((unused)) void *dummy)
                      sizeof(pkts_burst)) == -1)
                 fprintf(stderr, "read pkts_burst error.\n");
 
+            gettimeofday(&analyze_start, NULL);
             /* printf("Receive %d pakcets from port_%u\n", nb_rx, portid); */
 
             /* Create pcap header and process the packet. */
@@ -425,20 +448,26 @@ int lpm_main_loop_pipe(__attribute__((unused)) void *dummy)
                 gettimeofday(&h.ts, NULL);
 
                 /*Call the function to process the packets*/
-                ndpi_process_packet((u_char *) portid, &h,
+                ndpi_process_packet((u_char *) &portid, &h,
                                     (const u_char *) data);
             }
             /* Forwarding packets */
             l3fwd_lpm_send_packets(nb_rx, pkts_burst, portid, qconf);
+
+            gettimeofday(&analyze_end, NULL);
+
+            dpiresults[portid].analyze_time +=
+                (analyze_end.tv_sec - analyze_start.tv_sec) * 1000000 +
+                (analyze_end.tv_usec - analyze_start.tv_usec);
         }
+
+        /* dpiresults[portid].total_time +=
+            (total_end.tv_sec - total_start.tv_sec) * 1000000 +
+            (total_end.tv_usec - total_start.tv_usec); */
     }
     return 0;
 }
 
-static struct pipe_vars_t {
-    struct rte_mbuf **pkts_burst;
-    int nb_rx;
-};
 
 /*
  * Capture the packets then pass to analyze_module by pipe
@@ -447,21 +476,23 @@ static void *capture_module(void *arguments)
 {
     struct shared_vars_t *shared_vars = (struct shared_vars_t *) arguments;
     struct pipe_vars_t buf;
+    uint64_t prev_tsc, diff_tsc, cur_tsc;
     int *fd = shared_vars->fd;
+    struct rte_mbuf *pkts_burst[MAX_PKT_BURST];  // buffer for packets
     struct timeval capture_start, capture_end;
 
     const uint64_t drain_tsc =
         (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * BURST_TX_DRAIN_US;
-    shared_vars->prev_tsc = 0;
+    prev_tsc = 0;
 
-    int i, ret;
+    int i, ret, nb_rx;
 
     while (!force_quit) {
-        shared_vars->cur_tsc = rte_rdtsc();
+        cur_tsc = rte_rdtsc();
 
         /* TX burst queue drain */
-        shared_vars->diff_tsc = shared_vars->cur_tsc - shared_vars->prev_tsc;
-        if (unlikely(shared_vars->diff_tsc > drain_tsc)) {
+        diff_tsc = cur_tsc - prev_tsc;
+        if (unlikely(diff_tsc > drain_tsc)) {
             for (i = 0; i < shared_vars->qconf->n_tx_port; ++i) {
                 shared_vars->portid = shared_vars->qconf->tx_port_id[i];
                 if (shared_vars->qconf->tx_mbufs[shared_vars->portid].len == 0)
@@ -472,37 +503,40 @@ static void *capture_module(void *arguments)
                     shared_vars->portid);
                 shared_vars->qconf->tx_mbufs[shared_vars->portid].len = 0;
             }
-            shared_vars->prev_tsc = shared_vars->cur_tsc;
+            prev_tsc = cur_tsc;
         }
 
+        /* Polling for all rx_queues */
         for (i = 0; i < shared_vars->qconf->n_rx_queue; ++i) {
             shared_vars->portid = shared_vars->qconf->rx_queue_list[i].port_id;
             shared_vars->queueid =
                 shared_vars->qconf->rx_queue_list[i].queue_id;
-            shared_vars->nb_rx =
-                rte_eth_rx_burst(shared_vars->portid, shared_vars->queueid,
-                                 shared_vars->pkts_burst, MAX_PKT_BURST);
+            nb_rx = rte_eth_rx_burst(shared_vars->portid, shared_vars->queueid,
+                                     pkts_burst, MAX_PKT_BURST);
 
-            if (unlikely(shared_vars->nb_rx == 0))
+            if (unlikely(nb_rx == 0))
                 continue;
 
+            if (shared_vars->total_start.tv_sec == 0) {
+                gettimeofday(&shared_vars->total_start, NULL);
+            }
             gettimeofday(&capture_start, NULL);
 
-            buf.nb_rx = shared_vars->nb_rx;
-            buf.pkts_burst = shared_vars->pkts_burst;
+            buf.nb_rx = nb_rx;
+            memcpy(buf.pkts_burst, pkts_burst, sizeof(pkts_burst));
 
             gettimeofday(&capture_end, NULL);
+
             ret = write(fd[1], &buf, sizeof(buf));
-            if (ret == -1)
+            if (ret < 0)
                 fprintf(stderr, "Write error.\n");
-            /* printf("[Capturer] Write buf = %d\n", buf.nb_rx); */
+
             dpiresults[shared_vars->portid].capture_time +=
                 (capture_end.tv_sec - capture_start.tv_sec) * 1000000 +
                 (capture_end.tv_usec - capture_start.tv_usec);
         }
     }
-
-
+    /* Close module */
     close(fd[1]);
     printf("[lcore_%u] Capture module closed.\n", shared_vars->lcore_id);
     pthread_exit(NULL);
@@ -521,14 +555,16 @@ static void *analyze_module(void *arguments)
     while (!force_quit) {
         /* Analyzer receives packets */
         ret = read(fd[0], &buf, sizeof(buf));
-        if (ret == -1)
+        if (ret < 0)
             fprintf(stderr, "Write error.\n");
-        /* printf("[Analyzer] Read buf = %d\n", buf.nb_rx); */
 
         gettimeofday(&analyze_start, NULL);
+
         for (i = 0; i < buf.nb_rx; i++) {
             char *data = rte_pktmbuf_mtod(buf.pkts_burst[i], char *);
             int pkt_len = rte_pktmbuf_pkt_len(buf.pkts_burst[i]);
+            char *tmp = malloc(pkt_len * sizeof(char));
+            memcpy(tmp, data, pkt_len);
 
             /*Get pcap format*/
             struct pcap_pkthdr h;
@@ -536,19 +572,28 @@ static void *analyze_module(void *arguments)
             gettimeofday(&h.ts, NULL);
 
             /*Call the function to process the packets*/
-            ndpi_process_packet((u_char *) shared_vars->portid, &h,
-                                (const u_char *) data);
+            ndpi_process_packet((u_char *) &shared_vars->portid, &h,
+                                (const u_char *) tmp);
         }
+
         /* Forwarding packets */
         l3fwd_lpm_send_packets(buf.nb_rx, buf.pkts_burst, shared_vars->portid,
                                shared_vars->qconf);
+
         gettimeofday(&analyze_end, NULL);
+        gettimeofday(&shared_vars->total_end, NULL);
+
         dpiresults[shared_vars->portid].analyze_time +=
             (analyze_end.tv_sec - analyze_start.tv_sec) * 1000000 +
             (analyze_end.tv_usec - analyze_start.tv_usec);
     }
 
-    /* Analysis complete and put packet to the tx_queues */
+    dpiresults[shared_vars->portid].total_time +=
+        (shared_vars->total_end.tv_sec - shared_vars->total_start.tv_sec) *
+            1000000 +
+        (shared_vars->total_end.tv_usec - shared_vars->total_start.tv_usec);
+
+    /* Close module */
     close(fd[0]);
     printf("[lcore_%u] Analyze module closed.\n", shared_vars->lcore_id);
     pthread_exit(NULL);
@@ -561,9 +606,11 @@ int lpm_main_loop_thread_pipe(__attribute__((unused)) void *dummy)
     int i;
     struct shared_vars_t shared_vars;
 
-    shared_vars.lcore_id = rte_lcore_id();
-    shared_vars.qconf = &lcore_conf[shared_vars.lcore_id];
+    shared_vars.lcore_id = rte_lcore_id();  // get current lcore_id
+    shared_vars.qconf = &lcore_conf[shared_vars.lcore_id];  // get qconf
+    shared_vars.total_start.tv_sec = 0, shared_vars.total_start.tv_usec = 0;
 
+    /* Show info */
     if (shared_vars.qconf->n_rx_queue == 0) {
         RTE_LOG(INFO, L3FWD, "lcore %u has nothing to do\n",
                 shared_vars.lcore_id);
@@ -580,7 +627,6 @@ int lpm_main_loop_thread_pipe(__attribute__((unused)) void *dummy)
                 shared_vars.lcore_id, shared_vars.portid, shared_vars.queueid);
     }
 
-
     /* pipe init */
     if (pipe(shared_vars.fd) < 0) {
         fprintf(stderr, "Pipe init error.\n");
@@ -588,52 +634,38 @@ int lpm_main_loop_thread_pipe(__attribute__((unused)) void *dummy)
     }
 
     /* Declaration */
-    cpu_set_t cpuset;
-    pthread_t t1, t2;
+    cpu_set_t cpuset_capture, cpuset_analyze;
+    pthread_t p_capture, p_analyze;
     int ret;
 
     /* Create threads */
-    pthread_create(&t1, NULL, capture_module, (void *) &shared_vars);
-    pthread_create(&t2, NULL, analyze_module, (void *) &shared_vars);
+    pthread_create(&p_capture, NULL, capture_module, (void *) &shared_vars);
+    pthread_create(&p_analyze, NULL, analyze_module, (void *) &shared_vars);
 
-    /* Assign capture_module */
-    CPU_ZERO(&cpuset);
-    CPU_SET(shared_vars.lcore_id, &cpuset); // add present lcore to cpuset
-    ret = pthread_setaffinity_np(t1, sizeof(cpu_set_t), &cpuset);
-    if (ret != 0)
-        fprintf(stderr, "set cpu_affinity error!\n");
+    /* Set CPU affinity */
+    bool set_affinity = true;
+    if (set_affinity) {
+        CPU_ZERO(&cpuset_capture);
+        CPU_ZERO(&cpuset_analyze);
 
-    /* Assign analyze_module */
-    CPU_ZERO(&cpuset);
-    CPU_SET(2 + shared_vars.lcore_id, &cpuset); // add present lcore to cpuset
-    ret = pthread_setaffinity_np(t2, sizeof(cpu_set_t), &cpuset);
-    if (ret != 0)
-        fprintf(stderr, "set cpu_affinity error!\n");
+        CPU_SET(shared_vars.lcore_id, &cpuset_capture);
+        CPU_SET(shared_vars.lcore_id + 2, &cpuset_analyze);
 
-    /* Check cpu_affinity results */
-    int lcore_capture, lcore_analyze;
+        ret = pthread_setaffinity_np(p_capture, sizeof(cpu_set_t),
+                                     &cpuset_capture);
+        if (ret != 0)
+            fprintf(stderr, "[lcore.%u Capture]Set affinity error.\n",
+                    shared_vars.lcore_id);
 
-    ret = pthread_getaffinity_np(t1, sizeof(cpuset), &cpuset);
-    if (ret != 0)
-        fprintf(stderr, "get cpuset error!\n");
-    for (int i = 0;i < CPU_SETSIZE; i++)
-        if (CPU_ISSET(i, &cpuset))
-            lcore_capture = i;
-
-    ret = pthread_getaffinity_np(t2, sizeof(cpuset), &cpuset);
-    if (ret != 0)
-        fprintf(stderr, "get cpuset error!\n");
-    for (int i = 0;i < CPU_SETSIZE; i++)
-        if (CPU_ISSET(i, &cpuset))
-            lcore_analyze = i;
-    
-    printf("lcore: %u\n", shared_vars.lcore_id);
-    printf("capture_module is on lcore:%d \nanalyze_module is on lcore :%d\n",
-           lcore_capture, lcore_analyze);
-
+        ret = pthread_setaffinity_np(p_analyze, sizeof(cpu_set_t),
+                                     &cpuset_analyze);
+        if (ret != 0)
+            fprintf(stderr, "[lcore.%uAnalyze]Set affinity error.\n",
+                    shared_vars.lcore_id);
+    }
     /* pthread join */
-    pthread_join(t1, NULL);
-    pthread_join(t2, NULL);
+    pthread_join(p_capture, NULL);
+    pthread_join(p_analyze, NULL);
 
     return 0;
 }

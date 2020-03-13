@@ -27,7 +27,7 @@ pcre *re;
 int nb_real_patterns;
 void pcre_PS_init();
 void pcre_PS_release();
-bool pcre_search(uint8_t l3_protocol, uint16_t app_protocol, uint16_t sport, uint16_t dport, char *text);
+bool pcre_search(uint8_t l3_protocol, uint16_t app_protocol, uint16_t sport, uint16_t dport, char *payload);
 /* Initialize all modules */
 void pattern_search_module_init();
 
