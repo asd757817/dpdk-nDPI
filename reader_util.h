@@ -60,7 +60,7 @@ extern int dpdk_port_init(int port, struct rte_mempool *mbuf_pool);
 #define MAX_BYTE_COUNT_ARRAY_LENGTH 256
 #define MAX_NUM_PKTS               10
 
-#define MAX_NUM_READER_THREADS     16
+#define MAX_NUM_READER_THREADS     4
 #define IDLE_SCAN_PERIOD           10 /* msec (use TICK_RESOLUTION = 1000) */
 #define MAX_IDLE_TIME           30000
 #define IDLE_SCAN_BUDGET         1024

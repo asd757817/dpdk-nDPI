@@ -190,7 +190,7 @@ void ndpi_process_packet(u_char *args,
             (unsigned long) ndpi_thread_info[thread_id]
                 .workflow->stats.raw_packet_count,
             header->caplen);
-        getchar();
+        /* getchar(); */
     }
     free(packet_checked);
 

@@ -18,6 +18,6 @@ static FILE *csv_fp = NULL; /**< for CSV export */
 
 static u_int16_t decode_tunnels = 0;
 static u_int16_t num_loops = 1;
-static u_int8_t num_threads = 1;
+u_int8_t num_threads;
 
 #endif

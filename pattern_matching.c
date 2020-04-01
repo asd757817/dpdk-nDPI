@@ -41,7 +41,6 @@ inline bool automata_PM_search(char *str)
     return ndpi_match_string(automata_patterns, str);
 }
 
-
 static void show_rules()
 {
     snort_rule *rule_node = snort_rule_q->head;
@@ -73,61 +72,65 @@ static void show_rules()
     return;
 }
 
-void pattern_search_module_init()
-{
-    /* Read snort rules and parse pcre */
-    snort_rule_init();
 
-    /* call other algorithm init here */
-    return;
-}
-
-/* Find the node which msg is target and return. */
-static patterns_leaf_t *find_leaf(char *target, patterns_leaf_t *start)
+/* Find the node whose msg is target and return the node. */
+static patterns_tree_leaf_t *find_leaf(char *target,
+                                       patterns_tree_leaf_t *start)
 {
     if (!target || !start)
         return NULL;
-    patterns_leaf_t *ret_node = start;
 
-    while (strncmp(ret_node->msg, target, strlen(target)) != 0 &&
-           ret_node->next) {
+    patterns_tree_leaf_t *ret_node = start;
+
+    while (strcmp(ret_node->msg, target) != 0 && ret_node->next)
         ret_node = ret_node->next;
-    }
+
+    if (strcmp(ret_node->msg, target) != 0)
+        return NULL;
+
     return ret_node;
 }
 
-static patterns_leaf_t *find_patterns(char *protocol,
-                                      char *src_port,
-                                      char *dst_port)
+void add_leaf(patterns_tree_leaf_t *root, patterns_tree_leaf_t *leaf)
 {
-    /* Start at root & check root */
-    patterns_leaf_t *location = patterns_root;
-    if (!location || strncmp(location->msg, "root", 4) != 0)
+    patterns_tree_leaf_t *tmp = root;
+
+    while (tmp->next)
+        tmp = tmp->next;
+    tmp->next = leaf;
+}
+
+
+static void *find_patterns(patterns_tree_leaf_t *root,
+                           char *protocol,
+                           char *src_port,
+                           char *dst_port)
+{
+    /* Check if root is really thie root */
+    if (!root || strncmp(root->msg, "root", 4) != 0)
         return NULL;
 
     /* Find protocol node */
-    patterns_leaf_t *proto =
-        find_leaf(protocol, (patterns_leaf_t *) location->ptr);
-    if (location->ptr == NULL) {
-        /* printf("Add %s_leaf into the root\n", protocol); */
-        location->ptr = proto;
-    }
+    patterns_tree_leaf_t *proto =
+        find_leaf(protocol, (patterns_tree_leaf_t *) root->ptr);
+    if (!proto)
+        return NULL;
 
     /* Find src_port node */
-    patterns_leaf_t *sp = find_leaf(src_port, (patterns_leaf_t *) proto->ptr);
-    if (proto->ptr == NULL) {
-        /* printf("Add %s_leaf into the %s_leaf\n", sp->msg, proto->msg); */
-        proto->ptr = sp;
-    }
+    patterns_tree_leaf_t *sp =
+        find_leaf(src_port, (patterns_tree_leaf_t *) proto->ptr);
+    if (!sp)
+        return NULL;
+
     /* Find dst_port node */
-    patterns_leaf_t *dp = find_leaf(dst_port, (patterns_leaf_t *) sp->ptr);
-    if (sp->ptr == NULL) {
-        /* printf("Add %s_leaf into the %s_%s_leaf\n", dp->msg, proto->msg,
-         * sp->msg); */
-        sp->ptr = dp;
-    }
+    patterns_tree_leaf_t *dp =
+        find_leaf(dst_port, (patterns_tree_leaf_t *) sp->ptr);
+    if (!dp)
+        return NULL;
+
     return dp;
 }
+
 
 bool pcre_search(uint8_t l3_protocol,
                  uint16_t app_protocol,
@@ -135,29 +138,25 @@ bool pcre_search(uint8_t l3_protocol,
                  uint16_t dport,
                  char *payload)
 {
-    /* printf("%u %u %u %s\n", protocol, sport, dport, target); */
+    char src_port[6], dst_port[6];
 
-    /* root of the dataset */
-    patterns_leaf_t *dport_leaf;
+    sprintf(src_port, "%u", sport);
+    sprintf(dst_port, "%u", dport);
 
-    /*
-     * To be finished.
-     * Find all leaves and collect them in a queue.
-     * Traverse the queue and search for the patterns.
-     */
-
-    switch (app_protocol) {
-    case 7:
-        dport_leaf = find_patterns("tcp", "any", "80");
-        break;
-    default:
-        dport_leaf = find_patterns("tcp", "any", "any");
-        break;
-    }
+    /* dport_leaf->ptr points to a list storing patterns */
+    patterns_tree_leaf_t *dport_leaf;
 
     /* Start from root, traverse all leaves and check match */
+    if (l3_protocol == 6)
+        dport_leaf = find_patterns(patterns_root, "tcp", src_port, dst_port);
+    else
+        return false;
+
+    if (!dport_leaf)
+        return false;
+
     pcre_node_t *pcre_node = (pcre_node_t *) dport_leaf->ptr, *next;
-    while (pcre_node) {
+    while (pcre_node != NULL) {
         pcre *expression = pcre_node->re;
         const char *error;
         int ret, erroffest, ovector[100], workspace[100];
@@ -165,6 +164,7 @@ bool pcre_search(uint8_t l3_protocol,
 
         ret = pcre_exec(expression, NULL, payload, strlen(payload), 0, 0,
                         ovector, 100);
+
         /* Match for all stages means hits the rule */
         while ((ret >= 0) && (pcre_node->next_pcre_node != NULL)) {
             next = pcre_node->next_pcre_node;
@@ -173,11 +173,18 @@ bool pcre_search(uint8_t l3_protocol,
                             100);
         }
         if (ret >= 0) {
-            printf("[Alert]: Detecting %s\n", pcre_node->msg);
-            return 1;
-        } else {
+            printf("[Alert]:(tcp, %s, %s) %s\n", src_port, dst_port,
+                   pcre_node->msg);
+            return true;
+        } else
             pcre_node = pcre_node->next;
-        }
     }
-    return 0;
+    return false;
+}
+
+inline void pattern_search_module_init()
+{
+    /* Read snort rules and parse pcre */
+    snort_rule_init();
+    return;
 }

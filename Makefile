@@ -13,8 +13,8 @@ LIBNDPI = $(nDPI_src)/src/lib/libndpi.a
 SRCS-y := ndpiReader.c reader_util.c intrusion_detection.c l3fwd_em.c l3fwd_lpm.c ndpi_detection.c pattern_matching.c snort_rule_parser.c
 
 CFLAGS += -g
-CFLAGS += -Wno-strict-prototypes -Wno-missing-prototypes -Wno-missing-declarations -Wno-unused-parameter -I $(nDPI_src)/src/include -g -O2 -DUSE_DPDK
+CFLAGS += -Wno-strict-prototypes -Wno-missing-prototypes -Wno-missing-declarations -Wno-unused-parameter -I $(nDPI_src)/src/include -g -O2 -DUSE_DPDK 
 
-LDLIBS = $(LIBNDPI) -lpcap -lpthread -lpcre
+LDLIBS = $(LIBNDPI) -lpcap -lpcre -lgcc_s
 include $(RTE_SDK)/mk/rte.extapp.mk
 

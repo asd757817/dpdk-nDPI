@@ -106,7 +106,6 @@
  * Macro define
  * Configurable number of RX/TX reing descriptors
  */
-
 #define RTE_TEST_RX_DESC_DEFAULT 1024
 #define RTE_TEST_TX_DESC_DEFAULT 1024
 
@@ -214,7 +213,6 @@ static struct l3fwd_lkp_mode l3fwd_lpm_lkp = {
     .check_ptype = lpm_check_ptype,
     .cb_parse_ptype = lpm_cb_parse_ptype,
     /* .main_loop = lpm_main_loop, */
-    /* .main_loop = lpm_main_loop_pipe, */
     .main_loop = lpm_main_loop_thread_pipe,
     .get_ipv4_lookup_struct = lpm_get_ipv4_l3fwd_lookup_struct,
     .get_ipv6_lookup_struct = lpm_get_ipv6_l3fwd_lookup_struct,
@@ -2267,6 +2265,21 @@ void bpf_filter_port_array_add(int filter_array[], int size, int port)
     exit(-1);
 }
 
+static void dpiresults_init()
+{
+    for (int i = 0; i < MAX_NUM_READER_THREADS; i++) {
+        /* Time record init */
+        dpiresults[i].total_time = 0;
+        dpiresults[i].capture_time = 0;
+        dpiresults[i].analyze_time = 0;
+        /* Number of packets and packets size */
+        dpiresults[i].total_rx_packets = 0;
+        dpiresults[i].total_tx_packets = 0;
+        dpiresults[i].total_bytes = 0;
+        dpiresults[i].total_malicious = 0;
+    }
+    return;
+}
 
 int main(int argc, char **argv)
 {
@@ -2285,15 +2298,10 @@ int main(int argc, char **argv)
     analyzeUnitTest();
 
     pattern_search_module_init();
-    /* Init */
-    /* for (int i = 0; i < 4; i++)
-        dpiresults[i] = malloc(sizeof(struct dpi_results)); */
-
+    dpiresults_init();
 
     gettimeofday(&startup_time, NULL);
     ndpi_info_mod = ndpi_init_detection_module(ndpi_no_prefs);
-
-
 
     if (ndpi_info_mod == NULL)
         return -1;

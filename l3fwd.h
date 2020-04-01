@@ -48,6 +48,9 @@
 #endif
 #define HASH_ENTRY_NUMBER_DEFAULT 4
 
+/* File discriptor for pipe used in l3fwd_lpm.c*/
+int *fd_for_pipe[8];
+
 struct mbuf_table {
     uint16_t len;
     struct rte_mbuf *m_table[MAX_PKT_BURST];
@@ -195,7 +198,6 @@ uint16_t lpm_cb_parse_ptype(uint16_t port,
 int em_main_loop(__attribute__((unused)) void *dummy);
 
 int lpm_main_loop(__attribute__((unused)) void *dummy);
-int lpm_main_loop_pipe(__attribute__((unused)) void *dummy);
 int lpm_main_loop_thread_pipe(__attribute__((unused)) void *dummy);
 
 /* Return ipv4/ipv6 fwd lookup struct for LPM or EM. */

@@ -35,7 +35,7 @@ typedef struct pattern_node_t {
 } pattern_node_t;
 
 /*
- * This structure stores a snort rule.
+ * Store a snort rule.
  */
 typedef struct snort_rule {
     char *action;
@@ -64,13 +64,11 @@ void snort_parser_release();
 /*
  * Payload check module
  */
-typedef struct patterns_leaf_t {
+typedef struct patterns_tree_leaf_t {
     void *ptr;
     char *msg;
-    struct patterns_leaf_t *next;
-} patterns_leaf_t;
+    struct patterns_tree_leaf_t *next;
+} patterns_tree_leaf_t;
 
-patterns_leaf_t *patterns_root;
-
-
+patterns_tree_leaf_t *patterns_root;
 #endif

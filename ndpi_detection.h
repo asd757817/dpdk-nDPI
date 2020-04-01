@@ -24,7 +24,6 @@
 #include "uthash.h"
 
 /* variable declaration */
-
 u_int32_t current_ndpi_memory, max_ndpi_memory;
 char *_debug_protocols;
 u_int8_t enable_protocol_guess, enable_payload_analyzer;
@@ -160,7 +159,7 @@ struct dpi_results{
     unsigned long total_rx_packets, total_tx_packets, total_bytes, total_malicious;
     struct malicious_packet *malicous_head;
 };
-struct dpi_results dpiresults[4];
+struct dpi_results dpiresults[MAX_NUM_READER_THREADS];
 
 
 /* Functions declaration */

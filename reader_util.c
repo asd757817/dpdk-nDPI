@@ -1554,11 +1554,10 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow *workflow,
             }
         }
     }
+
     /* Check payload if payload_len > 0  */
-    if (payload_len > 0) {
-        int ret = pcre_search(proto, flow->detected_protocol.app_protocol,
-                              sport, dport, payload);
-    }
+    int ret = pcre_search(proto, flow->detected_protocol.app_protocol, sport,
+                          dport, payload);
 
     return (flow->detected_protocol);
 }
