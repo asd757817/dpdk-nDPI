@@ -249,7 +249,7 @@ static void parse_rule(char *str)
                 token = strtok(NULL, delim);
                 continue;
             } else if (!strncmp(token, "msg", 3)) {
-                /* Remove redudent marks */
+                /* Remove redundant marks */
                 token += 5;
                 int i = 0;
                 while (token[i] != '"')
