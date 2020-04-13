@@ -31,21 +31,24 @@
 #include "l3fwd.h"
 #include "ndpi_detection.h"
 
-/* Define structures and functions for shared variables */
-pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+#ifndef _cas
+#define _cas(ptr, oldval, newval) \
+    __sync_bool_compare_and_swap(ptr, oldval, newval)
+#endif
 
+/* Define structures and functions for shared variables */
 typedef struct queue_ele_t {
     struct queue_ele_t *next;
     struct rte_mbuf *pkts_burst[MAX_PKT_BURST];
     int nb_rx;
 } queue_ele_t;
 
-typedef struct my_queue_t {
+typedef struct queue_t {
     struct queue_ele_t *head;
     struct queue_ele_t *tail;
-    int length;
-    bool can_access;
-} my_queue_t;
+    struct queue_ele_t *tmp;
+    pthread_mutex_t lock;
+} queue_t;
 
 typedef struct shared_vars_t {
     int fd[2];
@@ -54,24 +57,30 @@ typedef struct shared_vars_t {
     uint8_t queueid;
     struct lcore_conf *qconf;
     struct timeval total_start, total_end;
-    my_queue_t *q;
+    queue_t *q;
 } shared_vars_t;
 
-my_queue_t *queue_new()
+queue_ele_t *queue_ele_new()
 {
-    my_queue_t *q = malloc(sizeof(my_queue_t));
-    if (q) {
-        q->head = NULL;
-        q->tail = NULL;
-        q->length = 0;
-        q->can_access = true;
+    queue_ele_t *node = malloc(sizeof(queue_ele_t));
+    node->next = NULL;
+    return node;
+}
 
+queue_t *queue_new()
+{
+    queue_t *q = malloc(sizeof(queue_t));
+    if (q) {
+        pthread_mutex_init(&q->lock, NULL);
+        q->tmp = queue_ele_new();
+        q->head = q->tmp;
+        q->tail = q->tmp;
         return q;
     }
     return NULL;
 }
 
-void queue_free(my_queue_t *q)
+void queue_free(queue_t *q)
 {
     if (q) {
         if (q->head) {
@@ -86,65 +95,104 @@ void queue_free(my_queue_t *q)
     free(q);
 }
 
-bool queue_add(my_queue_t *q, queue_ele_t *buf)
+bool queue_add(queue_t *q, queue_ele_t *buf)
 {
+    bool ret;
     if (!q || !buf)
-        return false;
+        ret = false;
     else {
+#ifdef USE_NQUEUE
+        queue_ele_t *new = queue_ele_new();
+        memcpy(new, buf, sizeof(queue_ele_t));
+        new->next = NULL;
+        queue_ele_t *tail, *next;
+        while (1) {
+            tail = q->tail;
+            next = tail->next;
+            if (tail == q->tail) {
+                if (_cas(&q->tail->next, NULL, new)) {
+                    ret = true;
+                    break;
+                } else
+                    _cas(&q->tail, tail, next);
+            }
+        }
+        _cas(&q->tail, tail, new);  // Update q->tail
+#else
         queue_ele_t *new_ele = malloc(sizeof(queue_ele_t));
         memcpy(new_ele, buf, sizeof(queue_ele_t));
-
         if (new_ele) {
             if (!q->head)
                 q->head = new_ele;
             if (q->tail)
                 q->tail->next = new_ele;
             q->tail = new_ele;
-            q->length += 1;
-            return true;
-
+            ret = true;
         } else {
             free(new_ele);
-            return false;
+            ret = false;
         }
+#endif
     }
+    return ret;
 }
 
-int queue_pop(my_queue_t *q, queue_ele_t *buf)
+int queue_pop(queue_t *q, queue_ele_t *buf)
 {
+    int ret;
     if (!q || !buf)
         return -1;
     else {
-        if (q->length == 0)
-            return 0;
+#ifdef USE_NQUEUE
+        queue_ele_t *head, *tail, *next;
+        while (1) {
+            head = q->head;
+            tail = q->tail;
+            next = head->next;
+            if (head == q->head) {
+                if (head == tail) {
+                    if (next == NULL) {
+                        return 0;
+                    }
+                    _cas(&q->tail, tail, next);
+                } else {
+                    memcpy(buf, next, sizeof(queue_ele_t));
+                    if (_cas(&q->head, head, next)) {
+                        return 1;
+                    }
+                }
+            }
+        }
+        free(head);
+#else
+        pthread_mutex_lock(&q->lock);
+        if (!q->head)
+            ret = 0;
         else {
             memcpy(buf, q->head, sizeof(queue_ele_t));
             queue_ele_t *tmp = q->head;
             q->head = q->head->next;
-            q->length -= 1;
-            return q->length + 1;
+            ret = 1;
         }
+        pthread_mutex_unlock(&q->lock);
+        return ret;
+#endif
     }
 }
 
-static int MyWrite(my_queue_t *q, queue_ele_t *buf)
+static int MyWrite(queue_t *q, queue_ele_t *buf)
 {
     int ret;
-    pthread_mutex_lock(&mutex);
     if (queue_add(q, buf))
         ret = 0;
     else
         ret = -1;
-    pthread_mutex_unlock(&mutex);
     return ret;
 }
 
-static int MyRead(my_queue_t *q, queue_ele_t *buf)
+static int MyRead(queue_t *q, queue_ele_t *buf)
 {
-    pthread_mutex_lock(&mutex);
-    int ret = queue_pop(q, buf);  // return queue length before pop
-    pthread_mutex_unlock(&mutex);
-    return ret;
+    return queue_pop(q, buf);
 }
 
 /* dpdk l3fwd  */
@@ -400,7 +448,7 @@ static void *capture_module(void *arguments)
     struct queue_ele_t buf, tmp;
     struct rte_mbuf *pkts_burst[MAX_PKT_BURST];  // buffer for packets
     struct timeval capture_start, capture_end;
-    my_queue_t *myqueue = shared_vars->q;
+    queue_t *myqueue = shared_vars->q;
 
     int *fd = shared_vars->fd;
     int i, ret, nb_rx, count = 0;
@@ -430,17 +478,19 @@ static void *capture_module(void *arguments)
             buf.nb_rx = nb_rx;
             memcpy(buf.pkts_burst, pkts_burst, sizeof(pkts_burst));
 
+#ifdef USE_PIPE
             ret = write(fd[1], &buf, sizeof(buf));
-            /* ret = MyWrite(myqueue, &buf); */
+#else
+            ret = MyWrite(myqueue, &buf);
+#endif
             if (ret < 0)
                 continue;
-            
+
             gettimeofday(&capture_end, NULL);
             dpiresults[shared_vars->lcore_id].capture_time +=
                 (capture_end.tv_sec - capture_start.tv_sec) * 1000000 +
                 (capture_end.tv_usec - capture_start.tv_usec);
         }
-    
     }
     /* Close module */
     close(fd[1]);
@@ -459,21 +509,20 @@ static void *analyze_module(void *arguments)
     struct timeval analyze_start, analyze_end;
     struct rte_mbuf *pkts_burst[MAX_PKT_BURST];
     int *fd = shared_vars->fd, ret = 0, i;
-    my_queue_t *myqueue = shared_vars->q;
+    queue_t *myqueue = shared_vars->q;
 
     analyze_start.tv_sec = 0, analyze_start.tv_usec = 0;
     analyze_end.tv_sec = 0, analyze_end.tv_usec = 0;
 
     while (!force_quit) {
+#ifdef USE_PIPE
         ret = read(fd[0], &buf, sizeof(buf));
-
-        /* if (unlikely(myqueue->length == 0))
+#else
+        ret = MyRead(myqueue, &buf);
+#endif
+        if (ret == 0) {
             continue;
-        ret = MyRead(myqueue, &buf); */
-
-        if (ret == 0)
-            continue;
-        else if (ret < 0)
+        } else if (ret < 0)
             break;
 
         gettimeofday(&analyze_start, NULL);
@@ -595,6 +644,7 @@ int lpm_main_loop_thread_pipe(__attribute__((unused)) void *dummy)
             fprintf(stderr, "[lcore.%u Analyze]Set affinity error.\n",
                     shared_vars.lcore_id);
     }
+
     /* pthread join */
     pthread_join(p_capture, NULL);
     pthread_join(p_analyze, NULL);

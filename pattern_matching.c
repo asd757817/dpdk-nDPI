@@ -146,9 +146,9 @@ bool pcre_search(uint8_t ip_proto,
     char src_port[6], dst_port[6];
     sprintf(src_port, "%u", sport);
     sprintf(dst_port, "%u", dport);
-    
+
     /* leaves_to_be_checked->ptr points to a list storing patterns */
-    patterns_tree_leaf_t *leaves_to_be_checked[4];
+    patterns_tree_leaf_t *leaves_to_be_checked[4] = {NULL, NULL, NULL, NULL};
     void *leaf;
 
     switch (ip_proto) {
@@ -164,19 +164,29 @@ bool pcre_search(uint8_t ip_proto,
 
         leaf = find_patterns(patterns_root, "tcp", src_port, "any");
         leaves_to_be_checked[3] = (patterns_tree_leaf_t *) leaf;
+
+        /* printf("Recieve packet. Find the patterns_leaf (tcp, %s, %s)\n",
+               src_port, dst_port); */
         break;
     case IPPROTO_UDP:
         leaf = find_patterns(patterns_root, "udp", "any", "any");
+        /* printf("Recieve packet. Find the patterns_leaf (udp, %s, %s)\n",
+               src_port, dst_port); */
         break;
     case IPPROTO_ICMP:
         leaf = find_patterns(patterns_root, "icmp", "any", "any");
+        /* printf("Recieve packet. Find the patterns_leaf (imcp, %s, %s)",
+               src_port, dst_port); */
         break;
     }
 
+
     /* Pattern matchiing */
     for (int i = 0; i < 4; i++) {
-        if (!leaves_to_be_checked[i])
+        if (!leaves_to_be_checked[i]) {
             continue;
+        }
+
         pcre_node_t *pcre_node = (pcre_node_t *) leaves_to_be_checked[i]->ptr,
                     *next;
         while (pcre_node != NULL) {
@@ -185,23 +195,27 @@ bool pcre_search(uint8_t ip_proto,
             int ret, erroffest, ovector[100], workspace[100];
             char buf[100];
 
+            /* printf("\tCheck for rule: %s\n", pcre_node->rule); */
             ret = pcre_exec(expression, NULL, payload, strlen(payload), 0, 0,
                             ovector, 100);
             /* Match for all stages means hits the rule */
             while ((ret >= 0) && (pcre_node->next_pcre_node != NULL)) {
                 next = pcre_node->next_pcre_node;
                 re = next->re;
+                /* printf("\tCheck for rule: %s\n", pcre_node->rule); */
                 ret = pcre_exec(re, NULL, payload, strlen(payload), 0, 0,
                                 ovector, 100);
             }
             if (ret >= 0) {
-                printf("[Alert]:(tcp, %s, %s) %s\n", src_port, dst_port,
-                       pcre_node->msg);
+                /* printf("[Alert]:(tcp, %s, %s) %s\n", src_port, dst_port,
+                       pcre_node->msg); */
+                /* printf("Complete checking.\n"); */
                 return true;
             } else
                 pcre_node = pcre_node->next;
         }
     }
+    /* printf("Complete checking.\n"); */
     return false;
 }
 

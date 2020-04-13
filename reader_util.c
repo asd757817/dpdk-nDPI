@@ -1556,8 +1556,11 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow *workflow,
     }
 
     /* Check payload if payload_len > 0  */
-    int ret = pcre_search(proto, flow->detected_protocol.app_protocol, sport,
-                          dport, payload);
+    bool is_malicious = false;
+    if (payload_len > 64) {
+        is_malicious = pcre_search(proto, flow->detected_protocol.app_protocol,
+                                   sport, dport, payload);
+    }
 
     return (flow->detected_protocol);
 }

@@ -120,8 +120,7 @@ static patterns_tree_leaf_t *find_leaf(char *target,
 
     patterns_tree_leaf_t *ret_node = start;
 
-    while (strcmp(ret_node->msg, target) != 0 &&
-           ret_node->next)
+    while (strcmp(ret_node->msg, target) != 0 && ret_node->next)
         ret_node = ret_node->next;
 
     if (strcmp(ret_node->msg, target) != 0)
@@ -220,6 +219,16 @@ static void check_module_add_node(patterns_tree_leaf_t *root,
     return;
 }
 
+static int find_char(char target, char *str)
+{
+    int i = 0;
+
+    while (target != str[i])
+        i += 1;
+
+    return i;
+}
+
 /*
    snort3 rule format
    action protocol src_ip src_port -> dst_ip dst_port (msg:"";xxxx;
@@ -250,11 +259,8 @@ static void parse_rule(char *str)
                 continue;
             } else if (!strncmp(token, "msg", 3)) {
                 /* Remove redundant marks */
-                token += 5;
-                int i = 0;
-                while (token[i] != '"')
-                    i++;
-                token[i] = '\0';
+                token += find_char('"', token) + 1;
+                token[find_char('"', token)] = '\0';
 
                 /* Copy msg to pattern_node */
                 char *str = malloc(sizeof(char) * strlen(token));
@@ -263,11 +269,8 @@ static void parse_rule(char *str)
 
             } else if (!strncmp(token, "content:", 7)) {
                 /* Remove redudent marks */
-                token += 9;
-                int i = 0;
-                while (token[i] != '"')
-                    i++;
-                token[i] = '\0';
+                token += find_char('"', token) + 1;
+                token[find_char('"', token)] = '\0';
 
                 /* Create content_node and string */
                 c_node_t *content_node = c_node_new();
@@ -290,23 +293,35 @@ static void parse_rule(char *str)
                 }
             } else if (!strncmp(token, "pcre", 4)) {
                 /* Remove redudent marks */
-                token += 7;
-                int i = 0, j = strlen(token);
-                while (token[j] != '/')
-                    j--;
-                token[j] = '\0';
+                token += find_char('"', token) + 1;
+                token[find_char('"', token)] = '\0';
+                /* The remaining rule will look like /[test]/i */
+                token += find_char('/', token) + 1;
+                int end = strlen(token);
+                int pcre_options = 0;
 
-                /* Save rule */
+                while (token[end] != '/')
+                    end -= 1;
+                /* Get pcre options */
+                for (int i = strlen(token); i > end; i--){
+                    if (token[i] == 'i')
+                        pcre_options |= PCRE_CASELESS;
+                    else if (token[i] == 'x')
+                        pcre_options |= PCRE_EXTENDED;
+                }
+
+                /* Save the rule into pcre_node */
                 pcre_node_t *pcre_node = pcre_node_new();
-                char *str = malloc(sizeof(char) * (strlen(token) + 1));
-                strncpy(str, token, strlen(token) + 1);
+                char *str = malloc(sizeof(char) * end);
+
+                strncpy(str, token, end);
                 pcre_node->rule = str;
 
                 /* pcre processing */
                 const char *error;
                 int erroffset;
-
-                pcre_node->re = pcre_compile(str, 0, &error, &erroffset, NULL);
+                
+                pcre_node->re = pcre_compile(str, pcre_options, &error, &erroffset, NULL);
                 if (pcre_node->re == NULL) {
                     fprintf(stderr,
                             "PCRE compilation failed at offset %d: %s\n",
@@ -428,15 +443,11 @@ void snort_rule_init()
     read_snort_rule();
 
     /* Show patterns tree */
-    /* patterns_tree_leaf_t *proto = (patterns_tree_leaf_t *) patterns_root->ptr,
-                         *src_port, *dst_port;
-    while (proto) {
-        printf("%s\n", proto->msg);
-        src_port = (patterns_tree_leaf_t *) proto->ptr;
-        while (src_port) {
-            printf("----%s\n", src_port->msg);
-            dst_port = (patterns_tree_leaf_t *) src_port->ptr;
-            while (dst_port) {
+    /* patterns_tree_leaf_t *proto = (patterns_tree_leaf_t *)
+    patterns_root->ptr, *src_port, *dst_port; while (proto) { printf("%s\n",
+    proto->msg); src_port = (patterns_tree_leaf_t *) proto->ptr; while
+    (src_port) { printf("----%s\n", src_port->msg); dst_port =
+    (patterns_tree_leaf_t *) src_port->ptr; while (dst_port) {
                 printf("--------%s\n", dst_port->msg);
                 pcre_node_t *pcre_node = (pcre_node_t *) dst_port->ptr;
                 while (pcre_node) {
