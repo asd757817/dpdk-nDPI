@@ -223,12 +223,12 @@ void ndpi_process_packet(u_char *args,
 
         memcpy(&begin, &end, sizeof(begin));
         memcpy(&pcap_start, &pcap_end, sizeof(pcap_start));
-    }
 
+    }
     /*
-       Leave the free as last statement to avoid crashes when
-       ndpi_detection_giveup() is called above by printResults()
-       */
+     * Leave the free as last statement to avoid crashes when
+     * ndpi_detection_giveup() is called above by printResults()
+     */
 }
 
 /*
@@ -1722,9 +1722,12 @@ void printResults(u_int64_t processing_time_usec, u_int64_t setup_time_usec)
                dpiresults[i].total_time / 1000000);
     }
     for (unsigned i = 0; i <= 3; i++) {
-        printf("\n\tlcore_%u recieve %lu packets (%lu bytes)\n", i,
+        printf("\n\tlcore_%u recieve %lu packets (%lu bytes)", i,
                dpiresults[i].total_rx_packets, dpiresults[i].total_bytes);
     }
+    printf("\n\t%lu %lu", dpiresults[0].total_rx_packets,
+           dpiresults[1].total_rx_packets);
+
 
 
 free_stats:

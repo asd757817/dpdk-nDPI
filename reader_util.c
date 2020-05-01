@@ -1561,6 +1561,10 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow *workflow,
         is_malicious = pcre_search(proto, flow->detected_protocol.app_protocol,
                                    sport, dport, payload);
     }
+    /*
+     * If is_malicious is ture -> block or do something.
+     * Just demo how the pcre_search() function works.
+     */
 
     return (flow->detected_protocol);
 }

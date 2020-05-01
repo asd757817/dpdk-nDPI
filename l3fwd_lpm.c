@@ -36,7 +36,15 @@
     __sync_bool_compare_and_swap(ptr, oldval, newval)
 #endif
 
-/* Define structures and functions for shared variables */
+/*
+ * Define structures and functions.
+ *
+ * @shared_vars_t
+ *   A structure that is shared between capturer and analyzer.
+ * @queue
+ *   queue_t: A queue contains a head, tail and a dummy node.
+ *   queue_ele_t: Node of queue which contains a nb_rx, pkts_burst and next.
+ */
 typedef struct queue_ele_t {
     struct queue_ele_t *next;
     struct rte_mbuf *pkts_burst[MAX_PKT_BURST];
@@ -51,7 +59,9 @@ typedef struct queue_t {
 } queue_t;
 
 typedef struct shared_vars_t {
+#ifdef USE_PIPE
     int fd[2];
+#endif
     unsigned lcore_id;
     uint16_t portid;
     uint8_t queueid;
@@ -60,14 +70,14 @@ typedef struct shared_vars_t {
     queue_t *q;
 } shared_vars_t;
 
-queue_ele_t *queue_ele_new()
+static inline queue_ele_t *queue_ele_new()
 {
     queue_ele_t *node = malloc(sizeof(queue_ele_t));
     node->next = NULL;
     return node;
 }
 
-queue_t *queue_new()
+static queue_t *queue_new()
 {
     queue_t *q = malloc(sizeof(queue_t));
     if (q) {
@@ -80,7 +90,7 @@ queue_t *queue_new()
     return NULL;
 }
 
-void queue_free(queue_t *q)
+static void queue_free(queue_t *q)
 {
     if (q) {
         if (q->head) {
@@ -95,32 +105,34 @@ void queue_free(queue_t *q)
     free(q);
 }
 
-bool queue_add(queue_t *q, queue_ele_t *buf)
+static bool queue_add(queue_t *q, queue_ele_t *buf)
 {
     bool ret;
     if (!q || !buf)
         ret = false;
     else {
 #ifdef USE_NQUEUE
-        queue_ele_t *new = queue_ele_new();
-        memcpy(new, buf, sizeof(queue_ele_t));
-        new->next = NULL;
+        queue_ele_t *new_ele = queue_ele_new();
+        rte_memcpy(new_ele, buf, sizeof(queue_ele_t));
+        new_ele->next = NULL;
         queue_ele_t *tail, *next;
         while (1) {
             tail = q->tail;
             next = tail->next;
             if (tail == q->tail) {
-                if (_cas(&q->tail->next, NULL, new)) {
+                if (_cas(&q->tail->next, NULL, new_ele)) {
                     ret = true;
                     break;
                 } else
                     _cas(&q->tail, tail, next);
             }
         }
-        _cas(&q->tail, tail, new);  // Update q->tail
+        _cas(&q->tail, tail, new_ele);  // Update q->tail
 #else
         queue_ele_t *new_ele = malloc(sizeof(queue_ele_t));
-        memcpy(new_ele, buf, sizeof(queue_ele_t));
+        rte_memcpy(new_ele, buf, sizeof(queue_ele_t));
+
+        pthread_mutex_lock(&q->lock);
         if (new_ele) {
             if (!q->head)
                 q->head = new_ele;
@@ -132,12 +144,13 @@ bool queue_add(queue_t *q, queue_ele_t *buf)
             free(new_ele);
             ret = false;
         }
+        pthread_mutex_unlock(&q->lock);
 #endif
     }
     return ret;
 }
 
-int queue_pop(queue_t *q, queue_ele_t *buf)
+static int queue_pop(queue_t *q, queue_ele_t *buf)
 {
     int ret;
     if (!q || !buf)
@@ -153,23 +166,24 @@ int queue_pop(queue_t *q, queue_ele_t *buf)
                 if (head == tail) {
                     if (next == NULL) {
                         return 0;
+                        /* continue; */
                     }
                     _cas(&q->tail, tail, next);
                 } else {
-                    memcpy(buf, next, sizeof(queue_ele_t));
+                    rte_memcpy(buf, next, sizeof(queue_ele_t));
                     if (_cas(&q->head, head, next)) {
+                        free(head);
                         return 1;
                     }
                 }
             }
         }
-        free(head);
 #else
         pthread_mutex_lock(&q->lock);
         if (!q->head)
             ret = 0;
         else {
-            memcpy(buf, q->head, sizeof(queue_ele_t));
+            rte_memcpy(buf, q->head, sizeof(queue_ele_t));
             queue_ele_t *tmp = q->head;
             q->head = q->head->next;
             ret = 1;
@@ -180,7 +194,7 @@ int queue_pop(queue_t *q, queue_ele_t *buf)
     }
 }
 
-static int MyWrite(queue_t *q, queue_ele_t *buf)
+static inline int MyWrite(queue_t *q, queue_ele_t *buf)
 {
     int ret;
     if (queue_add(q, buf))
@@ -190,7 +204,7 @@ static int MyWrite(queue_t *q, queue_ele_t *buf)
     return ret;
 }
 
-static int MyRead(queue_t *q, queue_ele_t *buf)
+static inline int MyRead(queue_t *q, queue_ele_t *buf)
 {
     return queue_pop(q, buf);
 }
@@ -354,10 +368,12 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
     struct timeval total_start, total_end, capture_start, analyze_start,
         analyze_end;
 
+    const uint64_t drain_tsc =
+        (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * BURST_TX_DRAIN_US;
+
     total_start.tv_sec = 0, total_start.tv_usec = 0;
     capture_start.tv_sec = 0, capture_start.tv_usec = 0;
     analyze_start.tv_sec = 0, analyze_start.tv_usec = 0;
-
     lcore_id = rte_lcore_id();
     qconf = &lcore_conf[lcore_id];
 
@@ -376,6 +392,21 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
     }
 
     while (!force_quit) {
+        cur_tsc = rte_rdtsc();
+        /* TX burst queue drain */
+        diff_tsc = cur_tsc - prev_tsc;
+        if (unlikely(diff_tsc > drain_tsc)) {
+            for (i = 0; i < qconf->n_tx_port; ++i) {
+                portid = qconf->tx_port_id[i];
+                if (qconf->tx_mbufs[portid].len == 0)
+                    continue;
+                send_burst(qconf, qconf->tx_mbufs[portid].len, portid);
+                qconf->tx_mbufs[portid].len = 0;
+            }
+
+            prev_tsc = cur_tsc;
+        }
+
         /* Read packet from RX queues */
         for (i = 0; i < qconf->n_rx_queue; ++i) {
             portid = qconf->rx_queue_list[i].port_id;
@@ -388,7 +419,9 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
 
             /* Time record */
             gettimeofday(&capture_start, NULL);
+
             dpiresults[lcore_id].total_rx_packets += nb_rx;
+
             gettimeofday(&analyze_start, NULL);
             dpiresults[lcore_id].capture_time +=
                 (analyze_start.tv_sec - capture_start.tv_sec) * 1000000 +
@@ -401,9 +434,10 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
                 struct pcap_pkthdr h;
 
                 dpiresults[lcore_id].total_bytes += pkt_len;
-                /* Get pcap format */
+
                 h.len = h.caplen = pkt_len;
                 gettimeofday(&h.ts, NULL);
+
                 /* Recored the first time seeing a packets */
                 if (total_start.tv_sec == 0)
                     gettimeofday(&total_start, NULL);
@@ -414,14 +448,12 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
             }
 
             /* Forwarding */
+#if defined RTE_ARCH_X86 || defined RTE_MACHINE_CPUFLAG_NEON || \
+    defined RTE_ARCH_PPC_64
             l3fwd_lpm_send_packets(nb_rx, pkts_burst, portid, qconf);
-            for (i = 0; i < qconf->n_tx_port; ++i) {
-                portid = qconf->tx_port_id[i];
-                if (qconf->tx_mbufs[portid].len == 0)
-                    continue;
-                send_burst(qconf, qconf->tx_mbufs[portid].len, portid);
-                qconf->tx_mbufs[portid].len = 0;
-            }
+#else
+            l3fwd_lpm_no_opt_send_packets(nb_rx, pkts_burst, portid, qconf);
+#endif /* X86 */
 
             /* Time record */
             gettimeofday(&analyze_end, NULL);
@@ -440,43 +472,65 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
 }
 
 /*
- * Capture the packets then pass to analyze_module by pipe
+ * Capture the packets then pass to analyze_packets by pipe
  */
-static void *capture_module(void *arguments)
+static void *capture_packets(void *arguments)
 {
     struct shared_vars_t *shared_vars = (struct shared_vars_t *) arguments;
-    struct queue_ele_t buf, tmp;
+    struct queue_ele_t buf;
     struct rte_mbuf *pkts_burst[MAX_PKT_BURST];  // buffer for packets
     struct timeval capture_start, capture_end;
+    struct lcore_conf *qconf = shared_vars->qconf;
     queue_t *myqueue = shared_vars->q;
 
-    int *fd = shared_vars->fd;
-    int i, ret, nb_rx, count = 0;
+    int i, ret, nb_rx;
     uint16_t portid;
     uint8_t queueid;
+    uint64_t prev_tsc, cur_tsc, diff_tsc;
+    const uint64_t drain_tsc =
+        (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * BURST_TX_DRAIN_US;
+
+#ifdef USE_PIPE
+    int *fd = shared_vars->fd;
+#endif
 
     capture_start.tv_sec = 0, capture_start.tv_usec = 0;
     capture_end.tv_sec = 0, capture_end.tv_usec = 0;
 
     while (!force_quit) {
-        /* Polling for all rx_queues */
-        for (i = 0; i < shared_vars->qconf->n_rx_queue; ++i) {
-            portid = shared_vars->qconf->rx_queue_list[i].port_id;
-            queueid = shared_vars->qconf->rx_queue_list[i].queue_id;
+        cur_tsc = rte_rdtsc();
+        /* TX burst queue drain */
+        diff_tsc = cur_tsc - prev_tsc;
+        if (unlikely(diff_tsc > drain_tsc)) {
+            for (i = 0; i < qconf->n_tx_port; ++i) {
+                portid = qconf->tx_port_id[i];
+                if (qconf->tx_mbufs[portid].len == 0)
+                    continue;
+                send_burst(qconf, qconf->tx_mbufs[portid].len, portid);
+                qconf->tx_mbufs[portid].len = 0;
+            }
+            prev_tsc = cur_tsc;
+        }
+
+        /* Read packet from RX queues */
+        for (i = 0; i < qconf->n_rx_queue; ++i) {
+            portid = qconf->rx_queue_list[i].port_id;
+            queueid = qconf->rx_queue_list[i].queue_id;
             nb_rx =
                 rte_eth_rx_burst(portid, queueid, pkts_burst, MAX_PKT_BURST);
 
             if (unlikely(nb_rx == 0))
                 continue;
 
+            /* Record the time that capturing packets */
             if (shared_vars->total_start.tv_sec == 0) {
                 gettimeofday(&shared_vars->total_start, NULL);
             }
-
             gettimeofday(&capture_start, NULL);
 
+            /* Copy informations to buf and insert buf into queue */
             buf.nb_rx = nb_rx;
-            memcpy(buf.pkts_burst, pkts_burst, sizeof(pkts_burst));
+            rte_memcpy(buf.pkts_burst, pkts_burst, sizeof(pkts_burst));
 
 #ifdef USE_PIPE
             ret = write(fd[1], &buf, sizeof(buf));
@@ -486,6 +540,7 @@ static void *capture_module(void *arguments)
             if (ret < 0)
                 continue;
 
+            /* Record the time that completing a capture */
             gettimeofday(&capture_end, NULL);
             dpiresults[shared_vars->lcore_id].capture_time +=
                 (capture_end.tv_sec - capture_start.tv_sec) * 1000000 +
@@ -493,71 +548,98 @@ static void *capture_module(void *arguments)
         }
     }
     /* Close module */
+#ifdef USE_PIPE
     close(fd[1]);
-    close(fd[0]);
+#endif
     printf("[lcore_%u] Capture module closed.\n", shared_vars->lcore_id);
-    pthread_exit(NULL);
+    return NULL;
 }
 
 /*
- * Analyze packets from capture_module
+ * Analyze packets from capture_packets
  */
-static void *analyze_module(void *arguments)
+static void *analyze_packets(void *arguments)
 {
     struct shared_vars_t *shared_vars = (struct shared_vars_t *) arguments;
-    struct queue_ele_t buf;
+    struct queue_ele_t *buf = malloc(sizeof(queue_ele_t));
     struct timeval analyze_start, analyze_end;
-    struct rte_mbuf *pkts_burst[MAX_PKT_BURST];
-    int *fd = shared_vars->fd, ret = 0, i;
+    struct rte_mbuf **pkts_burst;
+    struct lcore_conf *qconf = shared_vars->qconf;
     queue_t *myqueue = shared_vars->q;
+
+    int ret = 0, i, nb_rx, read_count = 0;
+#ifdef USE_PIPE
+    int *fd = shared_vars->fd;
+#endif
 
     analyze_start.tv_sec = 0, analyze_start.tv_usec = 0;
     analyze_end.tv_sec = 0, analyze_end.tv_usec = 0;
 
     while (!force_quit) {
 #ifdef USE_PIPE
-        ret = read(fd[0], &buf, sizeof(buf));
+        ret = read(fd[0], buf, sizeof(queue_ele_t));
 #else
-        ret = MyRead(myqueue, &buf);
+        ret = MyRead(myqueue, buf);
 #endif
         if (ret == 0) {
             continue;
         } else if (ret < 0)
             break;
 
+        /* Record the time that analyze_module reads packets from queue */
         gettimeofday(&analyze_start, NULL);
+        dpiresults[shared_vars->lcore_id].total_rx_packets += buf->nb_rx;
 
-        dpiresults[shared_vars->lcore_id].total_rx_packets += buf.nb_rx;
-
-
-        for (i = 0; i < buf.nb_rx; i++) {
-            char *data = rte_pktmbuf_mtod(buf.pkts_burst[i], char *);
-            int pkt_len = rte_pktmbuf_pkt_len(buf.pkts_burst[i]);
-
+        /* Examine each packet */
+        for (i = 0; i < buf->nb_rx; i++) {
+            char *data = rte_pktmbuf_mtod(buf->pkts_burst[i], char *);
+            int pkt_len = rte_pktmbuf_pkt_len(buf->pkts_burst[i]);
             dpiresults[shared_vars->lcore_id].total_bytes += pkt_len;
 
-            // Get pcap format
             struct pcap_pkthdr h;
             h.len = h.caplen = pkt_len;
             gettimeofday(&h.ts, NULL);
 
-            // Call the function to process the packets
+            /*
+             * Call the function to process the packet.
+             * Processing a packet at one time. This won't reassemble packets.
+             * Each packet is independent for this function.
+             * And this function only deal with header and payload checking to
+             * judge the protocol and application.
+             *
+             * No forward functions here (Maybe it can intergrate l3fwd in the
+             * future).
+             */
             ndpi_process_packet((u_char *) &shared_vars->lcore_id, &h,
                                 (const u_char *) data);
+            /*
+             * Here is some conditions to be considered ...
+             *   1. Send packet right after processing a packet.
+             *   2. Send multiple packets at once.
+             *
+             * Condition 1. will release the object in mempool after processing
+             * completed. It can reduce the probability of mempool being full,
+             * but that might not be very efficent.
+             * -> Use l3fwd_lpm_simple_forward().
+             *
+             * Condition 2. will send multiple packets at one time. And it can
+             * process at most 3 packets at one step. But a packet may be
+             * blocked by the later packet if the later packet take a long
+             * processing time. This might increase the probability of mempool
+             * being full and it wll results in pakcet loss.
+             * -> Use l3fwd_lpm_send_packets().
+             */
         }
-
         /* Forwarding packets */
-        l3fwd_lpm_send_packets(buf.nb_rx, buf.pkts_burst, shared_vars->portid,
-                               shared_vars->qconf);
-        for (i = 0; i < shared_vars->qconf->n_tx_port; ++i) {
-            shared_vars->portid = shared_vars->qconf->tx_port_id[i];
-            if (shared_vars->qconf->tx_mbufs[shared_vars->portid].len == 0)
-                continue;
-            send_burst(shared_vars->qconf,
-                       shared_vars->qconf->tx_mbufs[shared_vars->portid].len,
-                       shared_vars->portid);
-            shared_vars->qconf->tx_mbufs[shared_vars->portid].len = 0;
-        }
+#if defined RTE_ARCH_X86 || defined RTE_MACHINE_CPUFLAG_NEON || \
+    defined RTE_ARCH_PPC_64
+        l3fwd_lpm_send_packets(buf->nb_rx, buf->pkts_burst, shared_vars->portid,
+                               qconf);
+#else
+        l3fwd_lpm_no_opt_send_packets(buf->nb_rx, buf->pkts_burst,
+                                      shared_vars->portid, qconf);
+#endif /* X86 */
+
 
         gettimeofday(&analyze_end, NULL);
         gettimeofday(&shared_vars->total_end, NULL);
@@ -573,15 +655,17 @@ static void *analyze_module(void *arguments)
         (shared_vars->total_end.tv_sec - shared_vars->total_start.tv_sec) *
             1000000 +
         (shared_vars->total_end.tv_usec - shared_vars->total_start.tv_usec);
-
+#ifdef USE_PIPE
     close(fd[0]);
+#endif
     printf("[lcore_%u] Analyze module closed.\n", shared_vars->lcore_id);
-    pthread_exit(NULL);
+    return NULL;
 }
 
-int lpm_main_loop_thread_pipe(__attribute__((unused)) void *dummy)
+int lpm_main_loop_multi_threads(__attribute__((unused)) void *dummy)
 {
     int i;
+    char s[64];
     struct shared_vars_t shared_vars;
 
     /* Shared variables init */
@@ -597,7 +681,6 @@ int lpm_main_loop_thread_pipe(__attribute__((unused)) void *dummy)
                 shared_vars.lcore_id);
         return 0;
     }
-
     RTE_LOG(INFO, L3FWD, "entering main loop on lcore %u\n",
             shared_vars.lcore_id);
 
@@ -608,20 +691,21 @@ int lpm_main_loop_thread_pipe(__attribute__((unused)) void *dummy)
                 shared_vars.lcore_id, shared_vars.portid, shared_vars.queueid);
     }
 
+#ifdef USE_PIPE
     /* pipe init */
     if (pipe(shared_vars.fd) < 0) {
         fprintf(stderr, "Pipe init error.\n");
         exit(1);
     }
+#endif
 
-    /* Declaration */
     cpu_set_t cpuset_capture, cpuset_analyze;
     pthread_t p_capture, p_analyze;
     int ret;
 
     /* Create threads */
-    pthread_create(&p_capture, NULL, capture_module, (void *) &shared_vars);
-    pthread_create(&p_analyze, NULL, analyze_module, (void *) &shared_vars);
+    pthread_create(&p_capture, NULL, capture_packets, (void *) &shared_vars);
+    pthread_create(&p_analyze, NULL, analyze_packets, (void *) &shared_vars);
 
     /* Set CPU affinity */
     bool set_affinity = true;
@@ -649,6 +733,7 @@ int lpm_main_loop_thread_pipe(__attribute__((unused)) void *dummy)
     pthread_join(p_capture, NULL);
     pthread_join(p_analyze, NULL);
 
+    /* Exit */
     queue_free(shared_vars.q);
     return 0;
 }

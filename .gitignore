@@ -1,3 +1,5 @@
+Makefile
+rules/snort3-community.rules
 basicfwd.c
 tmp.c
 fwd_count.c
@@ -5,3 +7,5 @@ test.bk
 api_test*
 /build
 *.swp
+*.sh
+

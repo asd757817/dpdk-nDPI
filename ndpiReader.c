@@ -213,7 +213,7 @@ static struct l3fwd_lkp_mode l3fwd_lpm_lkp = {
     .check_ptype = lpm_check_ptype,
     .cb_parse_ptype = lpm_cb_parse_ptype,
     /* .main_loop = lpm_main_loop, */
-    .main_loop = lpm_main_loop_thread_pipe,
+    .main_loop = lpm_main_loop_multi_threads,
     .get_ipv4_lookup_struct = lpm_get_ipv4_l3fwd_lookup_struct,
     .get_ipv6_lookup_struct = lpm_get_ipv6_l3fwd_lookup_struct,
 };
@@ -525,7 +525,7 @@ static const struct option lgopts[] = {
     RTE_MAX((nb_ports * nb_rx_queue * nb_rxd +                                 \
              nb_ports * nb_lcores * MAX_PKT_BURST +                            \
              nb_ports * n_tx_queue * nb_txd + nb_lcores * MEMPOOL_CACHE_SIZE), \
-            (unsigned) 8192)
+            (unsigned) 16384)
 
 /* Parse the argument given in the command line of the application */
 static int parse_args(int argc, char **argv)
