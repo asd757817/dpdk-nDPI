@@ -962,6 +962,8 @@ static struct ndpi_flow_info *get_ndpi_flow_info(
                 newflow->entropy.src2dst_opackets++;
                 newflow->entropy.src2dst_l4_bytes += l4_data_len;
             }
+            // Create a newflow and initialize the malicous tag to 0;
+            newflow->is_malicious = 0;
             return newflow;
         }
     } else {
@@ -1555,17 +1557,32 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow *workflow,
         }
     }
 
-    /* Check payload if payload_len > 0  */
-    bool is_malicious = false;
-    if (payload_len > 64) {
-        is_malicious = pcre_search(proto, flow->detected_protocol.app_protocol,
-                                   sport, dport, payload);
-    }
     /*
-     * If is_malicious is ture -> block or do something.
-     * Just demo how the pcre_search() function works.
+     * To reduce the time of pattern mathcing
+     *  1. Check part of payload insteading of full payload.
+     *  2. Skip the payload whose length is too short.
+     *  3. A flow which is tagged as malicous dosen't check again.
+     *  4. etc.
      */
 
+    u_int8_t payload_copy[500];
+    if (!flow->is_malicious && payload_len > 50) {
+        strncpy(payload_copy, payload+50, 500);
+        if (pcre_search(proto, flow->detected_protocol.app_protocol, sport,
+                        dport, payload_copy))
+            flow->is_malicious += 1;
+    }
+
+    /* if (payload_len > 100) {
+        if (pcre_search(proto, flow->detected_protocol.app_protocol, sport,
+                        dport, payload))
+            flow->is_malicious += 1;
+    } */
+
+    /*
+     * If is_malicious != 0 -> block or do something.
+     * Just demo how the pcre_search() function works.
+     */
     return (flow->detected_protocol);
 }
 /* ****************************************************** */

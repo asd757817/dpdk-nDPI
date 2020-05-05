@@ -486,9 +486,6 @@ static void *capture_packets(void *arguments)
     int i, ret, nb_rx;
     uint16_t portid;
     uint8_t queueid;
-    uint64_t prev_tsc, cur_tsc, diff_tsc;
-    const uint64_t drain_tsc =
-        (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * BURST_TX_DRAIN_US;
 
 #ifdef USE_PIPE
     int *fd = shared_vars->fd;
@@ -498,20 +495,6 @@ static void *capture_packets(void *arguments)
     capture_end.tv_sec = 0, capture_end.tv_usec = 0;
 
     while (!force_quit) {
-        cur_tsc = rte_rdtsc();
-        /* TX burst queue drain */
-        diff_tsc = cur_tsc - prev_tsc;
-        if (unlikely(diff_tsc > drain_tsc)) {
-            for (i = 0; i < qconf->n_tx_port; ++i) {
-                portid = qconf->tx_port_id[i];
-                if (qconf->tx_mbufs[portid].len == 0)
-                    continue;
-                send_burst(qconf, qconf->tx_mbufs[portid].len, portid);
-                qconf->tx_mbufs[portid].len = 0;
-            }
-            prev_tsc = cur_tsc;
-        }
-
         /* Read packet from RX queues */
         for (i = 0; i < qconf->n_rx_queue; ++i) {
             portid = qconf->rx_queue_list[i].port_id;
@@ -568,6 +551,11 @@ static void *analyze_packets(void *arguments)
     queue_t *myqueue = shared_vars->q;
 
     int ret = 0, i, nb_rx, read_count = 0;
+    uint64_t prev_tsc, cur_tsc, diff_tsc;
+    const uint64_t drain_tsc =
+        (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * BURST_TX_DRAIN_US;
+    uint16_t portid;
+    uint8_t queueid;
 #ifdef USE_PIPE
     int *fd = shared_vars->fd;
 #endif
@@ -576,6 +564,19 @@ static void *analyze_packets(void *arguments)
     analyze_end.tv_sec = 0, analyze_end.tv_usec = 0;
 
     while (!force_quit) {
+        /* cur_tsc = rte_rdtsc();
+        [>TX burst queue drain<]
+        diff_tsc = cur_tsc - prev_tsc;
+        if (unlikely(diff_tsc > drain_tsc)) {
+            for (i = 0; i < qconf->n_tx_port; ++i) {
+                portid = qconf->tx_port_id[i];
+                if (qconf->tx_mbufs[portid].len == 0)
+                    continue;
+                send_burst(qconf, qconf->tx_mbufs[portid].len, portid);
+                qconf->tx_mbufs[portid].len = 0;
+            }
+            prev_tsc = cur_tsc;
+        } */
 #ifdef USE_PIPE
         ret = read(fd[0], buf, sizeof(queue_ele_t));
 #else

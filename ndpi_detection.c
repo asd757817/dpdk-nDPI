@@ -84,7 +84,6 @@ void ndpi_process_packet(u_char *args,
 
     /* allocate an exact size buffer to check overflows */
     uint8_t *packet_checked = malloc(header->caplen);
-
     memcpy(packet_checked, packet, header->caplen);
 
 
@@ -223,7 +222,6 @@ void ndpi_process_packet(u_char *args,
 
         memcpy(&begin, &end, sizeof(begin));
         memcpy(&pcap_start, &pcap_end, sizeof(pcap_start));
-
     }
     /*
      * Leave the free as last statement to avoid crashes when
@@ -1603,12 +1601,24 @@ void printResults(u_int64_t processing_time_usec, u_int64_t setup_time_usec)
                (unsigned long) cumulative_stats.packet_len[5]);
 
         if (processing_time_usec > 0) {
+            float run_time = dpiresults[0].total_time;
+            for (int i = 1; i < 3; i++) {
+                if (dpiresults[i].total_time > 0 &&
+                    dpiresults[i].total_time < run_time)
+                    run_time = dpiresults[i].total_time;
+            }
             char buf[32], buf1[32], when[64];
-            float t = (float) (cumulative_stats.ip_packet_count * 1000000) /
+            /* float t = (float) (cumulative_stats.ip_packet_count * 1000000) /
                       (float) processing_time_usec;
             float b =
                 (float) (cumulative_stats.total_wire_bytes * 8 * 1000000) /
-                (float) processing_time_usec;
+                (float) processing_time_usec; */
+            float t =
+                (float) (cumulative_stats.ip_packet_count * 1000000) / run_time;
+            float b =
+                (float) (cumulative_stats.total_wire_bytes * 8 * 1000000) /
+                run_time;
+
             float traffic_duration;
 
             if (live_capture)
@@ -1725,9 +1735,12 @@ void printResults(u_int64_t processing_time_usec, u_int64_t setup_time_usec)
         printf("\n\tlcore_%u recieve %lu packets (%lu bytes)", i,
                dpiresults[i].total_rx_packets, dpiresults[i].total_bytes);
     }
-    printf("\n\t%lu %lu", dpiresults[0].total_rx_packets,
+    printf("\n\t%lu %lu\n", dpiresults[0].total_rx_packets,
            dpiresults[1].total_rx_packets);
 
+    printf("\n\t%lf %lf\n",
+           dpiresults[0].analyze_time / dpiresults[0].total_rx_packets,
+           dpiresults[1].analyze_time / dpiresults[1].total_rx_packets);
 
 
 free_stats:

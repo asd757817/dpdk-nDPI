@@ -6,31 +6,35 @@
 #include <string.h>
 
 /*
- * This structure stores contents which is malicious pattern used in payload
- * check. next_content means the rule contains multiple patterns that should be
- * checked.
+ * Store "content" in Snort rule option.
+ * @ next -> the content of the next rule.
+ * @ next_content -> there are multiple contents in this rule.
  */
-typedef struct c_node_t {
-    struct c_node_t *next;
+typedef struct content_t {
     char *content;
-    struct c_node_t *next_content;
-} c_node_t;
+    struct content_t *next;
+    struct content_t *next_content;
+} content_t;
 
 /*
- * This structure stores rule options.
- * For now, only store msg, content and pcre.
+ * Store "PCRE" in Snort rule option.
+ * Not support multiple PCRE in one rule
+ * If there are multiple PCRE in one rule, refer to content_t.
  */
 typedef struct pcre_node_t {
     char *msg;
-    struct pcre_node_t *next_pcre_node;
     char *rule;
-    pcre *re;
     struct pcre_node_t *next;
+    pcre *regexp;
 } pcre_node_t;
 
+/*
+ * There may be content and pcre in one rule.
+ * Store them in this structure.
+ */
 typedef struct pattern_node_t {
     char *msg;
-    struct c_node_t *content_node;
+    struct content_t *content_node;
     struct pcre_node_t *pcre_node;
 } pattern_node_t;
 
@@ -49,7 +53,7 @@ typedef struct snort_rule {
 } snort_rule;
 
 /*
- * Use a list to record all rules.
+ * Use a linked list to store all the rules.
  */
 typedef struct snort_rule_list {
     snort_rule *head;
@@ -62,13 +66,21 @@ void snort_rule_init();
 void snort_parser_release();
 
 /*
- * Payload check module
+ * Structrues for payload checking.
+ * Build a tree to stores all patterns.
+ * There are 4 stages in this tree and each leaf has 2 pointers:
+ *  @ ptr  -> point to next stage leaves.
+ *  @ next -> point to next leaf in this stage.
+ * Stages:
+ *  1-stage leaves are protocol
+ *  2-stage leaves are src_port
+ *  3-stage leaves are dst_port
+ *  4-stage leaves are patterns
  */
 typedef struct patterns_tree_leaf_t {
-    void *ptr;
     char *msg;
+    void *ptr;
     struct patterns_tree_leaf_t *next;
 } patterns_tree_leaf_t;
-
 patterns_tree_leaf_t *patterns_root;
 #endif

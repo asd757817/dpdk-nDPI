@@ -219,6 +219,9 @@ typedef struct ndpi_flow_info {
 
   struct ndpi_entropy entropy;
   struct ndpi_entropy last_entropy;  
+  
+  // Tag for malicous check
+  int is_malicious;
 } ndpi_flow_info_t;
 
 

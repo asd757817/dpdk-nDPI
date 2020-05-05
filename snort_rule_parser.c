@@ -5,9 +5,9 @@
 #include <stdio.h>
 
 /* Create a new content node */
-static struct c_node_t *c_node_new()
+static struct content_t *c_node_new()
 {
-    c_node_t *node = malloc(sizeof(c_node_t));
+    content_t *node = malloc(sizeof(content_t));
     if (node) {
         node->next_content = NULL;
         node->content = NULL;
@@ -20,10 +20,9 @@ static struct pcre_node_t *pcre_node_new()
 {
     pcre_node_t *node = malloc(sizeof(pcre_node_t));
     if (node) {
-        node->next_pcre_node = NULL;
         node->rule = NULL;
         node->msg = NULL;
-        node->re = NULL;
+        node->regexp = NULL;
         node->next = NULL;
     }
     return node;
@@ -142,7 +141,6 @@ static void *find_patterns(patterns_tree_leaf_t *root,
     /* Find protocol node, if return node is NULL then create one */
     patterns_tree_leaf_t *proto =
         find_leaf(protocol, (patterns_tree_leaf_t *) root->ptr);
-
     if (!proto) {
         proto = patterns_tree_leaf_new();
         proto->msg = malloc(strlen(protocol) * sizeof(char));
@@ -267,13 +265,72 @@ static void parse_rule(char *str)
                 strncpy(str, token, strlen(token));
                 pattern_node->msg = str;
 
-            } else if (!strncmp(token, "content:", 7)) {
+            } else if (!strncmp(token, "pcre", 4)) {
+                /* Remove redudent marks */
+                token += find_char('"', token) + 1;
+                token[find_char('"', token)] = '\0';
+
+                /*
+                 * The remaining rule will look like /[test]/i
+                 * Find the starting and endding / sign
+                 */
+                token += find_char('/', token) + 1;
+                int end = strlen(token);
+                int pcre_options = 0;
+
+                while (token[end] != '/')
+                    end -= 1;
+                /* Get pcre options */
+                for (int i = strlen(token); i > end; i--) {
+                    switch (token[i]) {
+                    case 'i':
+                        pcre_options |= PCRE_CASELESS;
+                        break;
+                    case 'x':
+                        pcre_options |= PCRE_EXTENDED;
+                        break;
+                    case 'm':
+                        pcre_options |= PCRE_MULTILINE;
+                        break;
+                    }
+                }
+                token[end] = '\0';
+
+                /* Save the rule into pcre_node */
+                char *str = malloc(sizeof(char) * strlen(token));
+                strncpy(str, token, strlen(token));
+
+                pcre_node_t *pcre_node = pcre_node_new();
+                pcre_node->rule = str;
+                /* pcre processing */
+                const char *error;
+                int erroffset;
+
+                pcre_node->regexp =
+                    pcre_compile(str, pcre_options, &error, &erroffset, NULL);
+                if (pcre_node->regexp == NULL) {
+                    fprintf(stderr,
+                            "PCRE compilation failed at offset %d: %s\n",
+                            erroffset, error);
+                    fprintf(stderr, "Pattern is: %s\n", str);
+                    exit(1);
+                }
+
+                /* Insert */
+                if (pattern_node->pcre_node == NULL)
+                    pattern_node->pcre_node = pcre_node;
+                /*
+                 * If there are multiple PCRE in one rule, refer to content_node
+                 * insertion. Modify the pcre_node_t structure and this insert
+                 * operation.
+                 */
+            } else if (!strncmp(token, "content", 7)) {
                 /* Remove redudent marks */
                 token += find_char('"', token) + 1;
                 token[find_char('"', token)] = '\0';
 
                 /* Create content_node and string */
-                c_node_t *content_node = c_node_new();
+                content_t *content_node = c_node_new();
                 char *str = malloc(sizeof(char) * strlen(token));
 
                 /* Copy content string to content_node */
@@ -281,7 +338,7 @@ static void parse_rule(char *str)
                 content_node->content = str;
 
                 /* Insert content_node into pattern_node */
-                c_node_t *end_node = pattern_node->content_node;
+                content_t *end_node = pattern_node->content_node;
                 if (end_node == NULL) {
                     // There is no content_node
                     pattern_node->content_node = content_node;
@@ -291,56 +348,9 @@ static void parse_rule(char *str)
                         end_node = end_node->next_content;
                     end_node->next_content = content_node;
                 }
-            } else if (!strncmp(token, "pcre", 4)) {
-                /* Remove redudent marks */
-                token += find_char('"', token) + 1;
-                token[find_char('"', token)] = '\0';
-                /* The remaining rule will look like /[test]/i */
-                token += find_char('/', token) + 1;
-                int end = strlen(token);
-                int pcre_options = 0;
-
-                while (token[end] != '/')
-                    end -= 1;
-                /* Get pcre options */
-                for (int i = strlen(token); i > end; i--){
-                    if (token[i] == 'i')
-                        pcre_options |= PCRE_CASELESS;
-                    else if (token[i] == 'x')
-                        pcre_options |= PCRE_EXTENDED;
-                }
-
-                /* Save the rule into pcre_node */
-                pcre_node_t *pcre_node = pcre_node_new();
-                char *str = malloc(sizeof(char) * end);
-
-                strncpy(str, token, end);
-                pcre_node->rule = str;
-
-                /* pcre processing */
-                const char *error;
-                int erroffset;
-                
-                pcre_node->re = pcre_compile(str, pcre_options, &error, &erroffset, NULL);
-                if (pcre_node->re == NULL) {
-                    fprintf(stderr,
-                            "PCRE compilation failed at offset %d: %s\n",
-                            erroffset, error);
-                    fprintf(stderr, "Pattern is: %s\n", str);
-                    exit(1);
-                }
-
-                /* Insert */
-                pcre_node_t *end_node = pattern_node->pcre_node;
-                if (end_node == NULL) {
-                    pattern_node->pcre_node = pcre_node;
-                } else {
-                    while (end_node->next_pcre_node != NULL)
-                        end_node = end_node->next_pcre_node;
-                    end_node->next_pcre_node = pcre_node;
-                }
             }
             token = mystrip(strtok(NULL, delim));
+
         }
         /* Parse action, protocol, src_ip and ... */
         else {
@@ -386,37 +396,6 @@ static void read_snort_rule()
     }
 }
 
-static void show_rules()
-{
-    snort_rule *rule_node = snort_rule_q->head;
-
-    while (rule_node) {
-        /* Show action, protocol, ... , dst_port */
-        printf("%s %s %s %s %s %s ", rule_node->action, rule_node->protocol,
-               rule_node->src_ip, rule_node->src_port, rule_node->dst_ip,
-               rule_node->dst_port);
-        printf("Alert msg: \"%s\" ", rule_node->pattern->msg);
-
-        /* Show content */
-        c_node_t *cn = rule_node->pattern->content_node;
-        if (cn != NULL) {
-            printf("Content:\"%s", cn->content);
-            while (cn->next_content != NULL) {
-                cn = cn->next_content;
-                printf(" -> %s", cn->content);
-            }
-            printf("\" ");
-        }
-
-        /* Show pcre */
-        if (rule_node->pattern->pcre_node)
-            printf("pcre:\"%s", rule_node->pattern->pcre_node->rule);
-
-        printf("\n");
-        rule_node = rule_node->next;
-    }
-}
-
 bool patterns_tree_init()
 {
     patterns_root = patterns_tree_leaf_new();
@@ -442,24 +421,29 @@ void snort_rule_init()
     /* Read rule file & parse. */
     read_snort_rule();
 
-    /* Show patterns tree */
-    /* patterns_tree_leaf_t *proto = (patterns_tree_leaf_t *)
-    patterns_root->ptr, *src_port, *dst_port; while (proto) { printf("%s\n",
-    proto->msg); src_port = (patterns_tree_leaf_t *) proto->ptr; while
-    (src_port) { printf("----%s\n", src_port->msg); dst_port =
-    (patterns_tree_leaf_t *) src_port->ptr; while (dst_port) {
-                printf("--------%s\n", dst_port->msg);
-                pcre_node_t *pcre_node = (pcre_node_t *) dst_port->ptr;
-                while (pcre_node) {
-                    printf("------------%s\n", pcre_node->msg);
-                    pcre_node = pcre_node->next;
-                }
-                dst_port = dst_port->next;
-            }
-            src_port = src_port->next;
-        }
-        proto = proto->next;
-    } */
+    /* Save patterns tree */
+    /*
+     * FILE *fd = fopen("rule_tree.txt", "w");
+     * patterns_tree_leaf_t *proto = (patterns_tree_leaf_t *)
+     * patterns_root->ptr, *src_port, *dst_port; while (proto) { fprintf(fd,
+     * "%s\n", proto->msg); src_port = (patterns_tree_leaf_t *) proto->ptr;
+     *     while (src_port) {
+     *         fprintf(fd, "----%s\n", src_port->msg);
+     *         dst_port = (patterns_tree_leaf_t *) src_port->ptr;
+     *         while (dst_port) {
+     *             fprintf(fd, "--------%s\n", dst_port->msg);
+     *             pcre_node_t *pcre_node = (pcre_node_t *) dst_port->ptr;
+     *             while (pcre_node) {
+     *                 fprintf(fd, "------------%s\n", pcre_node->msg);
+     *                 pcre_node = pcre_node->next;
+     *             }
+     *             dst_port = dst_port->next;
+     *         }
+     *         src_port = src_port->next;
+     *     }
+     *     proto = proto->next;
+     * }
+     */
 
     return;
 }
@@ -483,4 +467,3 @@ void snort_parser_release()
     }
     return;
 }
-
