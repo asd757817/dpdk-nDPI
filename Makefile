@@ -14,6 +14,6 @@ SRCS-y := ndpiReader.c reader_util.c intrusion_detection.c l3fwd_em.c l3fwd_lpm.
 
 CFLAGS += -g
 CFLAGS += -Wno-strict-prototypes -Wno-missing-prototypes -Wno-missing-declarations -Wno-unused-parameter -I $(nDPI_src)/src/include -g -O2 -DUSE_DPDK -DUSE_PIPE
-LDLIBS = $(LIBNDPI) -lpcap -lpcre -lgcc_s -lm -lpthread
+LDLIBS = $(LIBNDPI) -lpcap -lpcre -lm -lpthread -lhs
 include $(RTE_SDK)/mk/rte.extapp.mk
 

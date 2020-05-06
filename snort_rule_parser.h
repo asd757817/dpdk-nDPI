@@ -1,10 +1,10 @@
 #ifndef _SNORT_RULE_PARSER_H_
 #define _SNORT_RULE_PARSER_H_
 
+#include <hs/hs.h>
 #include <pcre.h>
 #include <stdlib.h>
 #include <string.h>
-
 /*
  * Store "content" in Snort rule option.
  * @ next -> the content of the next rule.
@@ -33,38 +33,15 @@ typedef struct pcre_node_t {
  * Store them in this structure.
  */
 typedef struct pattern_node_t {
-    char *msg;
-    struct content_t *content_node;
+    hs_database_t *hs_db;
+    char **alert_msg;
+    char **database;
+    int *ids;
+    unsigned *flags;
+    int elements;
+    int array_size;
     struct pcre_node_t *pcre_node;
 } pattern_node_t;
-
-/*
- * Store a snort rule.
- */
-typedef struct snort_rule {
-    char *action;
-    char *protocol;
-    char *src_ip;
-    char *src_port;
-    char *dst_ip;
-    char *dst_port;
-    pattern_node_t *pattern;
-    struct snort_rule *next;
-} snort_rule;
-
-/*
- * Use a linked list to store all the rules.
- */
-typedef struct snort_rule_list {
-    snort_rule *head;
-    snort_rule *tail;
-    int length;
-} snort_rule_list;
-snort_rule_list *snort_rule_q;
-
-void snort_rule_init();
-void snort_parser_release();
-
 /*
  * Structrues for payload checking.
  * Build a tree to stores all patterns.
@@ -77,10 +54,12 @@ void snort_parser_release();
  *  3-stage leaves are dst_port
  *  4-stage leaves are patterns
  */
-typedef struct patterns_tree_leaf_t {
+typedef struct leaf_t {
     char *msg;
     void *ptr;
-    struct patterns_tree_leaf_t *next;
-} patterns_tree_leaf_t;
-patterns_tree_leaf_t *patterns_root;
+    struct leaf_t *next;
+} leaf_t;
+leaf_t *patterns_root;
+
+void snort_rule_init();
 #endif

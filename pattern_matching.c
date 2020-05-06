@@ -1,8 +1,8 @@
+#include "pattern_matching.h"
+#include <hs/hs.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
-
-#include "pattern_matching.h"
 #include "snort_rule_parser.h"
 
 /*
@@ -46,12 +46,11 @@ inline bool automata_PM_search(char *str)
  * Find the node whose msg matches target and return the ptr of node.
  * This function will be called in finding patterns set.
  */
-static patterns_tree_leaf_t *find_leaf(char *target,
-                                       patterns_tree_leaf_t *start)
+static leaf_t *find_leaf(char *target, leaf_t *start)
 {
     if (!target || !start)
         return NULL;
-    patterns_tree_leaf_t *ret_node = start;
+    leaf_t *ret_node = start;
 
     /*
      * Search for the node having target string.
@@ -65,7 +64,7 @@ static patterns_tree_leaf_t *find_leaf(char *target,
     return ret_node;
 }
 
-static void *find_patterns(patterns_tree_leaf_t *root,
+static void *find_patterns(leaf_t *root,
                            char *protocol,
                            char *src_port,
                            char *dst_port)
@@ -74,20 +73,20 @@ static void *find_patterns(patterns_tree_leaf_t *root,
     if (!root || strncmp(root->msg, "root", 4) != 0)
         return NULL;
 
-    patterns_tree_leaf_t *proto, *sp, *dp;
+    leaf_t *proto, *sp, *dp;
 
     /* Find protocol node */
-    proto = find_leaf(protocol, (patterns_tree_leaf_t *) root->ptr);
+    proto = find_leaf(protocol, (leaf_t *) root->ptr);
     if (!proto)
         return NULL;
 
     /* Find src_port node */
-    sp = find_leaf(src_port, (patterns_tree_leaf_t *) proto->ptr);
+    sp = find_leaf(src_port, (leaf_t *) proto->ptr);
     if (!sp)
         return NULL;
 
     /* Find dst_port node */
-    dp = find_leaf(dst_port, (patterns_tree_leaf_t *) sp->ptr);
+    dp = find_leaf(dst_port, (leaf_t *) sp->ptr);
     if (!dp)
         return NULL;
 
@@ -106,50 +105,50 @@ bool pcre_search(uint8_t ip_proto,
     sprintf(dst_port, "%u", dport);
 
     /* to_be_checked->ptr points to a list storing patterns */
-    patterns_tree_leaf_t *to_be_checked[4] = {NULL, NULL, NULL, NULL};
+    leaf_t *to_be_checked[4] = {NULL, NULL, NULL, NULL};
     void *leaf;
 
     switch (ip_proto) {
     case IPPROTO_TCP:
-        to_be_checked[0] = (patterns_tree_leaf_t *) find_patterns(
-            patterns_root, "tcp", "any", "any");
+        to_be_checked[0] =
+            (leaf_t *) find_patterns(patterns_root, "tcp", "any", "any");
 
-        to_be_checked[1] = (patterns_tree_leaf_t *) find_patterns(
-            patterns_root, "tcp", "any", dst_port);
+        to_be_checked[1] =
+            (leaf_t *) find_patterns(patterns_root, "tcp", "any", dst_port);
 
-        to_be_checked[2] = (patterns_tree_leaf_t *) find_patterns(
-            patterns_root, "tcp", src_port, dst_port);
+        to_be_checked[2] =
+            (leaf_t *) find_patterns(patterns_root, "tcp", src_port, dst_port);
 
-        to_be_checked[3] = (patterns_tree_leaf_t *) find_patterns(
-            patterns_root, "tcp", src_port, "any");
+        to_be_checked[3] =
+            (leaf_t *) find_patterns(patterns_root, "tcp", src_port, "any");
 
         break;
     case IPPROTO_UDP:
-        to_be_checked[0] = (patterns_tree_leaf_t *) find_patterns(
-            patterns_root, "udp", "any", "any");
+        to_be_checked[0] =
+            (leaf_t *) find_patterns(patterns_root, "udp", "any", "any");
 
-        to_be_checked[1] = (patterns_tree_leaf_t *) find_patterns(
-            patterns_root, "udp", "any", dst_port);
+        to_be_checked[1] =
+            (leaf_t *) find_patterns(patterns_root, "udp", "any", dst_port);
 
-        to_be_checked[2] = (patterns_tree_leaf_t *) find_patterns(
-            patterns_root, "udp", src_port, dst_port);
+        to_be_checked[2] =
+            (leaf_t *) find_patterns(patterns_root, "udp", src_port, dst_port);
 
-        to_be_checked[3] = (patterns_tree_leaf_t *) find_patterns(
-            patterns_root, "udp", src_port, "any");
+        to_be_checked[3] =
+            (leaf_t *) find_patterns(patterns_root, "udp", src_port, "any");
 
         break;
     case IPPROTO_ICMP:
-        to_be_checked[0] = (patterns_tree_leaf_t *) find_patterns(
-            patterns_root, "icmp", "any", "any");
+        to_be_checked[0] =
+            (leaf_t *) find_patterns(patterns_root, "icmp", "any", "any");
 
-        to_be_checked[1] = (patterns_tree_leaf_t *) find_patterns(
-            patterns_root, "icmp", "any", dst_port);
+        to_be_checked[1] =
+            (leaf_t *) find_patterns(patterns_root, "icmp", "any", dst_port);
 
-        to_be_checked[2] = (patterns_tree_leaf_t *) find_patterns(
-            patterns_root, "icmp", src_port, dst_port);
+        to_be_checked[2] =
+            (leaf_t *) find_patterns(patterns_root, "icmp", src_port, dst_port);
 
-        to_be_checked[3] = (patterns_tree_leaf_t *) find_patterns(
-            patterns_root, "icmp", src_port, "any");
+        to_be_checked[3] =
+            (leaf_t *) find_patterns(patterns_root, "icmp", src_port, "any");
 
         break;
     }

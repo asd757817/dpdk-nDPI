@@ -1989,7 +1989,6 @@ void test_lib()
 
         terminateDetection(portid);
     }
-    snort_parser_release();
 #else
     long thread_id;
     int status;
