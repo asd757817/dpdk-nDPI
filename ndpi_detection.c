@@ -1608,6 +1608,7 @@ void printResults(u_int64_t processing_time_usec, u_int64_t setup_time_usec)
                     run_time = dpiresults[i].total_time;
             }
             char buf[32], buf1[32], when[64];
+
             /* float t = (float) (cumulative_stats.ip_packet_count * 1000000) /
                       (float) processing_time_usec;
             float b =
@@ -1728,7 +1729,7 @@ void printResults(u_int64_t processing_time_usec, u_int64_t setup_time_usec)
     for (unsigned i = 0; i <= 3; i++) {
         printf("\t%-20u%-25f%-20f%-20f\n", i,
                dpiresults[i].capture_time / 1000000,
-               dpiresults[i].analyze_time / 1000000,
+               dpiresults[i].forward_time / 1000000,
                dpiresults[i].total_time / 1000000);
     }
     for (unsigned i = 0; i <= 3; i++) {
@@ -1738,9 +1739,10 @@ void printResults(u_int64_t processing_time_usec, u_int64_t setup_time_usec)
     printf("\n\t%lu %lu\n", dpiresults[0].total_rx_packets,
            dpiresults[1].total_rx_packets);
 
+    printf("\n\t%s\n", "Processing time per packet");
     printf("\n\t%lf %lf\n",
-           dpiresults[0].analyze_time / dpiresults[0].total_rx_packets,
-           dpiresults[1].analyze_time / dpiresults[1].total_rx_packets);
+           dpiresults[0].capture_time / dpiresults[0].total_rx_packets,
+           dpiresults[1].capture_time / dpiresults[1].total_rx_packets);
 
 
 free_stats:

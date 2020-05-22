@@ -40,7 +40,7 @@
  * Define structures and functions.
  *
  * @shared_vars_t
- *   A structure that is shared between capturer and analyzer.
+ *   A structure that is shared between capture and forward.
  * @queue
  *   queue_t: A queue contains a head, tail and a dummy node.
  *   queue_ele_t: Node of queue which contains a nb_rx, pkts_burst and next.
@@ -49,6 +49,7 @@ typedef struct queue_ele_t {
     struct queue_ele_t *next;
     struct rte_mbuf *pkts_burst[MAX_PKT_BURST];
     int nb_rx;
+    struct timeval start;
 } queue_ele_t;
 
 typedef struct queue_t {
@@ -74,6 +75,9 @@ static inline queue_ele_t *queue_ele_new()
 {
     queue_ele_t *node = malloc(sizeof(queue_ele_t));
     node->next = NULL;
+    node->start.tv_sec = 0;
+    node->start.tv_usec = 0;
+
     return node;
 }
 
@@ -365,15 +369,15 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
     uint16_t portid;
     uint8_t queueid;
     struct lcore_conf *qconf;
-    struct timeval total_start, total_end, capture_start, analyze_start,
-        analyze_end;
+    struct timeval total_start = {0, 0}, total_end = {0, 0},
+                   capture_start = {0, 0}, analyze_start = {0, 0}, analyze_end;
 
     const uint64_t drain_tsc =
         (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * BURST_TX_DRAIN_US;
 
-    total_start.tv_sec = 0, total_start.tv_usec = 0;
+    /* total_start.tv_sec = 0, total_start.tv_usec = 0;
     capture_start.tv_sec = 0, capture_start.tv_usec = 0;
-    analyze_start.tv_sec = 0, analyze_start.tv_usec = 0;
+    anaorward_start.tv_sec = 0, forward_start.tv_usec = 0; */
     lcore_id = rte_lcore_id();
     qconf = &lcore_conf[lcore_id];
 
@@ -457,29 +461,29 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
 
             /* Time record */
             gettimeofday(&analyze_end, NULL);
-            gettimeofday(&total_end, NULL);
+
             dpiresults[lcore_id].analyze_time +=
                 (analyze_end.tv_sec - analyze_start.tv_sec) * 1000000 +
                 (analyze_end.tv_usec - analyze_start.tv_usec);
+
+            dpiresults[lcore_id].total_time +=
+                (analyze_end.tv_sec - capture_start.tv_sec) * 1000000 +
+                (analyze_end.tv_usec - capture_start.tv_usec);
         }
     }
-    /* Time record */
-    dpiresults[lcore_id].total_time +=
-        (total_end.tv_sec - total_start.tv_sec) * 1000000 +
-        (total_end.tv_usec - total_start.tv_usec);
 
     return 0;
 }
 
 /*
- * Capture the packets then pass to analyze_packets by pipe
+ * Capture the packets and write them into a queue.
  */
 static void *capture_packets(void *arguments)
 {
     struct shared_vars_t *shared_vars = (struct shared_vars_t *) arguments;
     struct queue_ele_t buf;
     struct rte_mbuf *pkts_burst[MAX_PKT_BURST];  // buffer for packets
-    struct timeval capture_start, capture_end;
+    struct timeval capture_start = {0, 0}, capture_end = {0, 0};
     struct lcore_conf *qconf = shared_vars->qconf;
     queue_t *myqueue = shared_vars->q;
 
@@ -490,9 +494,6 @@ static void *capture_packets(void *arguments)
 #ifdef USE_PIPE
     int *fd = shared_vars->fd;
 #endif
-
-    capture_start.tv_sec = 0, capture_start.tv_usec = 0;
-    capture_end.tv_sec = 0, capture_end.tv_usec = 0;
 
     while (!force_quit) {
         /* Read packet from RX queues */
@@ -511,8 +512,50 @@ static void *capture_packets(void *arguments)
             }
             gettimeofday(&capture_start, NULL);
 
+            /* Examine each packet */
+            for (i = 0; i < nb_rx; i++) {
+                char *data = rte_pktmbuf_mtod(pkts_burst[i], char *);
+                int pkt_len = rte_pktmbuf_pkt_len(pkts_burst[i]);
+                dpiresults[shared_vars->lcore_id].total_bytes += pkt_len;
+
+                struct pcap_pkthdr h;
+                h.len = h.caplen = pkt_len;
+                gettimeofday(&h.ts, NULL);
+
+                /*
+                 * Call the function to process the packet.
+                 * Processing a packet at one time. This won't reassemble
+                 * packets. Each packet is independent for this function. And
+                 * this function only deal with header and payload checking to
+                 * judge the protocol and application.
+                 *
+                 * No forward functions here (Maybe it can intergrate l3fwd in
+                 * the future).
+                 */
+                ndpi_process_packet((u_char *) &shared_vars->lcore_id, &h,
+                                    (const u_char *) data);
+                /*
+                 * Here is some conditions to be considered ...
+                 *   1. Send packet right after processing a packet.
+                 *   2. Send multiple packets at once.
+                 *
+                 * Condition 1. will release the object in mempool after
+                 * processing completed. It can reduce the probability of
+                 * mempool being full, but that might not be very efficent.
+                 * -> Use l3fwd_lpm_simple_forward().
+                 *
+                 * Condition 2. will send multiple packets at one time. And it
+                 * can process at most 3 packets at one step. But a packet may
+                 * be blocked by the later packet if the later packet take a
+                 * long processing time. This might increase the probability of
+                 * mempool being full and it wll results in pakcet loss.
+                 * -> Use l3fwd_lpm_send_packets().
+                 */
+            }
+
             /* Copy informations to buf and insert buf into queue */
             buf.nb_rx = nb_rx;
+            buf.start = capture_start;
             rte_memcpy(buf.pkts_burst, pkts_burst, sizeof(pkts_burst));
 
 #ifdef USE_PIPE
@@ -539,13 +582,13 @@ static void *capture_packets(void *arguments)
 }
 
 /*
- * Analyze packets from capture_packets
+ * forward packets from capture_packets
  */
-static void *analyze_packets(void *arguments)
+static void *forward_packets(void *arguments)
 {
     struct shared_vars_t *shared_vars = (struct shared_vars_t *) arguments;
     struct queue_ele_t *buf = malloc(sizeof(queue_ele_t));
-    struct timeval analyze_start, analyze_end;
+    struct timeval forward_start, forward_end;
     struct rte_mbuf **pkts_burst;
     struct lcore_conf *qconf = shared_vars->qconf;
     queue_t *myqueue = shared_vars->q;
@@ -560,12 +603,12 @@ static void *analyze_packets(void *arguments)
     int *fd = shared_vars->fd;
 #endif
 
-    analyze_start.tv_sec = 0, analyze_start.tv_usec = 0;
-    analyze_end.tv_sec = 0, analyze_end.tv_usec = 0;
+    forward_start.tv_sec = 0, forward_start.tv_usec = 0;
+    forward_end.tv_sec = 0, forward_end.tv_usec = 0;
 
     while (!force_quit) {
-        /* cur_tsc = rte_rdtsc();
-        [>TX burst queue drain<]
+        cur_tsc = rte_rdtsc();
+        /*TX burst queue drain*/
         diff_tsc = cur_tsc - prev_tsc;
         if (unlikely(diff_tsc > drain_tsc)) {
             for (i = 0; i < qconf->n_tx_port; ++i) {
@@ -576,7 +619,7 @@ static void *analyze_packets(void *arguments)
                 qconf->tx_mbufs[portid].len = 0;
             }
             prev_tsc = cur_tsc;
-        } */
+        }
 #ifdef USE_PIPE
         ret = read(fd[0], buf, sizeof(queue_ele_t));
 #else
@@ -587,50 +630,10 @@ static void *analyze_packets(void *arguments)
         } else if (ret < 0)
             break;
 
-        /* Record the time that analyze_module reads packets from queue */
-        gettimeofday(&analyze_start, NULL);
+        /* Record the time that forward_module reads packets from queue */
+        gettimeofday(&forward_start, NULL);
         dpiresults[shared_vars->lcore_id].total_rx_packets += buf->nb_rx;
 
-        /* Examine each packet */
-        for (i = 0; i < buf->nb_rx; i++) {
-            char *data = rte_pktmbuf_mtod(buf->pkts_burst[i], char *);
-            int pkt_len = rte_pktmbuf_pkt_len(buf->pkts_burst[i]);
-            dpiresults[shared_vars->lcore_id].total_bytes += pkt_len;
-
-            struct pcap_pkthdr h;
-            h.len = h.caplen = pkt_len;
-            gettimeofday(&h.ts, NULL);
-
-            /*
-             * Call the function to process the packet.
-             * Processing a packet at one time. This won't reassemble packets.
-             * Each packet is independent for this function.
-             * And this function only deal with header and payload checking to
-             * judge the protocol and application.
-             *
-             * No forward functions here (Maybe it can intergrate l3fwd in the
-             * future).
-             */
-            ndpi_process_packet((u_char *) &shared_vars->lcore_id, &h,
-                                (const u_char *) data);
-            /*
-             * Here is some conditions to be considered ...
-             *   1. Send packet right after processing a packet.
-             *   2. Send multiple packets at once.
-             *
-             * Condition 1. will release the object in mempool after processing
-             * completed. It can reduce the probability of mempool being full,
-             * but that might not be very efficent.
-             * -> Use l3fwd_lpm_simple_forward().
-             *
-             * Condition 2. will send multiple packets at one time. And it can
-             * process at most 3 packets at one step. But a packet may be
-             * blocked by the later packet if the later packet take a long
-             * processing time. This might increase the probability of mempool
-             * being full and it wll results in pakcet loss.
-             * -> Use l3fwd_lpm_send_packets().
-             */
-        }
         /* Forwarding packets */
 #if defined RTE_ARCH_X86 || defined RTE_MACHINE_CPUFLAG_NEON || \
     defined RTE_ARCH_PPC_64
@@ -642,24 +645,25 @@ static void *analyze_packets(void *arguments)
 #endif /* X86 */
 
 
-        gettimeofday(&analyze_end, NULL);
+        gettimeofday(&forward_end, NULL);
         gettimeofday(&shared_vars->total_end, NULL);
 
-        /* Recored total analyze_time */
-        dpiresults[shared_vars->lcore_id].analyze_time +=
-            (analyze_end.tv_sec - analyze_start.tv_sec) * 1000000 +
-            (analyze_end.tv_usec - analyze_start.tv_usec);
+        /* Recored total forward_time */
+        dpiresults[shared_vars->lcore_id].forward_time +=
+            (forward_end.tv_sec - forward_start.tv_sec) * 1000000 +
+            (forward_end.tv_usec - forward_start.tv_usec);
     }
 
-    /* Close module */
-    dpiresults[shared_vars->lcore_id].total_time =
+    dpiresults[shared_vars->lcore_id].total_time +=
         (shared_vars->total_end.tv_sec - shared_vars->total_start.tv_sec) *
             1000000 +
         (shared_vars->total_end.tv_usec - shared_vars->total_start.tv_usec);
+
+    /* Close module */
 #ifdef USE_PIPE
     close(fd[0]);
 #endif
-    printf("[lcore_%u] Analyze module closed.\n", shared_vars->lcore_id);
+    printf("[lcore_%u] forward module closed.\n", shared_vars->lcore_id);
     return NULL;
 }
 
@@ -700,22 +704,22 @@ int lpm_main_loop_multi_threads(__attribute__((unused)) void *dummy)
     }
 #endif
 
-    cpu_set_t cpuset_capture, cpuset_analyze;
-    pthread_t p_capture, p_analyze;
+    cpu_set_t cpuset_capture, cpuset_forward;
+    pthread_t p_capture, p_forward;
     int ret;
 
     /* Create threads */
     pthread_create(&p_capture, NULL, capture_packets, (void *) &shared_vars);
-    pthread_create(&p_analyze, NULL, analyze_packets, (void *) &shared_vars);
+    pthread_create(&p_forward, NULL, forward_packets, (void *) &shared_vars);
 
     /* Set CPU affinity */
     bool set_affinity = true;
     if (set_affinity) {
         CPU_ZERO(&cpuset_capture);
-        CPU_ZERO(&cpuset_analyze);
+        CPU_ZERO(&cpuset_forward);
 
         CPU_SET(shared_vars.lcore_id, &cpuset_capture);
-        CPU_SET(shared_vars.lcore_id + 2, &cpuset_analyze);
+        CPU_SET(shared_vars.lcore_id + 2, &cpuset_forward);
 
         ret = pthread_setaffinity_np(p_capture, sizeof(cpu_set_t),
                                      &cpuset_capture);
@@ -723,16 +727,16 @@ int lpm_main_loop_multi_threads(__attribute__((unused)) void *dummy)
             fprintf(stderr, "[lcore.%u Capture]Set affinity error.\n",
                     shared_vars.lcore_id);
 
-        ret = pthread_setaffinity_np(p_analyze, sizeof(cpu_set_t),
-                                     &cpuset_analyze);
+        ret = pthread_setaffinity_np(p_forward, sizeof(cpu_set_t),
+                                     &cpuset_forward);
         if (ret != 0)
-            fprintf(stderr, "[lcore.%u Analyze]Set affinity error.\n",
+            fprintf(stderr, "[lcore.%u forward]Set affinity error.\n",
                     shared_vars.lcore_id);
     }
 
     /* pthread join */
     pthread_join(p_capture, NULL);
-    pthread_join(p_analyze, NULL);
+    pthread_join(p_forward, NULL);
 
     /* Exit */
     queue_free(shared_vars.q);

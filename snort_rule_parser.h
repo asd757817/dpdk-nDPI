@@ -33,15 +33,20 @@ typedef struct pcre_node_t {
  * Store them in this structure.
  */
 typedef struct pattern_node_t {
-    hs_database_t *hs_db;
+    hs_database_t *database;
+    hs_scratch_t *scratch;
+    pcre **regexp;
+
     char **alert_msg;
-    char **database;
+    char **patterns;
+    char **options;
     int *ids;
     unsigned *flags;
     int elements;
     int array_size;
     struct pcre_node_t *pcre_node;
 } pattern_node_t;
+
 /*
  * Structrues for payload checking.
  * Build a tree to stores all patterns.
@@ -61,5 +66,12 @@ typedef struct leaf_t {
 } leaf_t;
 leaf_t *patterns_root;
 
+/*
+ * Read snort rule file in rules directory.
+ * Parse the rules line by line.
+ * Only extract rules that contains PCRE expression
+ * and build the pattern tree that will be used for
+ * pattern matching algorithm
+ */
 void snort_rule_init();
 #endif
