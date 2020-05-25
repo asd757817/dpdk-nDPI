@@ -73,13 +73,13 @@ void setupDetection(u_int16_t thread_id, pcap_t *pcap_handle)
 }
 
 /* Check packet */
-void ndpi_process_packet(u_char *args,
+void ndpi_process_packet(u_int16_t lcore_id,
                          const struct pcap_pkthdr *header,
                          const u_char *packet)
 {
     struct ndpi_proto p;
     /* u_int16_t thread_id = (u_int16_t) 0;   */
-    u_int16_t thread_id = *((u_int16_t *) args);
+    u_int16_t thread_id = lcore_id;
 
 
     /* allocate an exact size buffer to check overflows */

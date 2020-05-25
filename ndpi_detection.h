@@ -166,7 +166,7 @@ struct dpi_results dpiresults[MAX_NUM_READER_THREADS];
 /* Functions declaration */
 void setupDetection(u_int16_t thread_id, pcap_t *pcap_handle);
 
-void ndpi_process_packet(u_char *args,
+void ndpi_process_packet(u_int16_t lcore_id,
                          const struct pcap_pkthdr *header,
                          const u_char *packet);
 

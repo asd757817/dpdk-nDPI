@@ -212,8 +212,8 @@ static struct l3fwd_lkp_mode l3fwd_lpm_lkp = {
     .setup = setup_lpm,
     .check_ptype = lpm_check_ptype,
     .cb_parse_ptype = lpm_cb_parse_ptype,
-    .main_loop = lpm_main_loop,
-    /* .main_loop = lpm_main_loop_multi_threads, */
+    /* .main_loop = lpm_main_loop, */
+    .main_loop = lpm_main_loop_multi_threads,
     .get_ipv4_lookup_struct = lpm_get_ipv4_l3fwd_lookup_struct,
     .get_ipv6_lookup_struct = lpm_get_ipv6_l3fwd_lookup_struct,
 };
@@ -820,15 +820,8 @@ static int dpdk_l3fwd_init(int argc, char **argv)
     ret_nb += ret;
 
     force_quit = false;
-    /* pre-init dst MACs for all ports to 02:00:00:00:00:xx */
 
-    /*
-    dest_eth_addr[0] = 0xad46ef290c00;
-    dest_eth_addr[1] = 0x6109ec290c00;
-    for (uint16_t i = 0; i < 2; i++) {
-        *(uint64_t *) (val_eth + i) = dest_eth_addr[i];
-    }
-    */
+    /* Get dst MACs from input arguments */
 
     /* parse application arguments (after the EAL ones) */
     ret = parse_args(argc, argv);
@@ -1054,7 +1047,7 @@ typedef struct ndpi_id {
 static int dpdk_port_id = 0, dpdk_run_capture = 1;
 #endif
 
-void test_lib(); /* Forward */
+void run_IPS(); /* Forward */
 
 
 #ifdef DEBUG_TRACE
@@ -1880,7 +1873,7 @@ static void runPcapLoop(u_int16_t thread_id)
     if ((!shutdown_app) &&
         (ndpi_thread_info[thread_id].workflow->pcap_handle != NULL))
         if (pcap_loop(ndpi_thread_info[thread_id].workflow->pcap_handle, -1,
-                      &ndpi_process_packet, (u_char *) &thread_id) < 0)
+                      &ndpi_process_packet, thread_id) < 0)
             printf(
                 "Error while reading pcap file: '%s'\n",
                 pcap_geterr(ndpi_thread_info[thread_id].workflow->pcap_handle));
@@ -1934,7 +1927,7 @@ pcap_loop:
 }
 
 /* Create threads, Start to capture, analyze and transfer packets */
-void test_lib()
+void run_IPS()
 {
     u_int64_t processing_time_usec, setup_time_usec;
 #ifdef USE_DPDK
@@ -1949,8 +1942,13 @@ void test_lib()
         setupDetection(portid, cap);
     }
 
-    gettimeofday(&begin, NULL);  // program startup_time
+    /* program startup time */
+    gettimeofday(&begin, NULL);
 
+#ifdef USE_SYSTEM2
+    /* Launch per-lcore init on every lcore */
+    lpm_main_loop_capture(NULL);
+#else
     /* Launch per-lcore init on every lcore */
     rte_eal_mp_remote_launch(l3fwd_lkp.main_loop, NULL, CALL_MASTER);
     RTE_LCORE_FOREACH_SLAVE(lcore_id)
@@ -1959,7 +1957,7 @@ void test_lib()
             break;
         }
     }
-
+#endif
     /* Stop ports */
     RTE_ETH_FOREACH_DEV(portid)
     {
@@ -1972,7 +1970,9 @@ void test_lib()
     }
     printf("Bye...\n");
 
-    gettimeofday(&end, NULL);  // program close_time
+    /* program closed time */
+    gettimeofday(&end, NULL);
+
     /* Calculate the running time of nDPI */
     processing_time_usec = end.tv_sec * 1000000 + end.tv_usec -
                            (begin.tv_sec * 1000000 + begin.tv_usec);
@@ -2295,20 +2295,20 @@ int main(int argc, char **argv)
     automataUnitTest();
     serializerUnitTest();
     analyzeUnitTest();
-
     pattern_search_module_init();
     dpiresults_init();
 
+    /* Record time */
     gettimeofday(&startup_time, NULL);
-    ndpi_info_mod = ndpi_init_detection_module(ndpi_no_prefs);
 
+    /* Initialize ndpi detction module */
+    ndpi_info_mod = ndpi_init_detection_module(ndpi_no_prefs);
     if (ndpi_info_mod == NULL)
         return -1;
-
     memset(ndpi_thread_info, 0, sizeof(ndpi_thread_info));
 
+    /* Parse input options*/
     parseOptions(argc, argv);
-
     if (!quiet_mode) {
         printf(
             "\n-----------------------------------------------------------\n"
@@ -2317,19 +2317,24 @@ int main(int argc, char **argv)
             "* just to show you what you can do with the library. Feel \n"
             "* free to extend it and send us the patches for inclusion\n"
             "------------------------------------------------------------\n\n");
-
         printf("Using nDPI (%s) [%d thread(s)]\n", ndpi_revision(),
                num_threads);
     }
 
+    /* Signal handler */
     signal(SIGINT, sigproc);
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
-    /* for (i = 0; i < num_loops; i++) */
-    test_lib();
+    /* Call main function */
+    run_IPS();
 
-    /* output file .. not used  */
+
+    /*
+     * All results will display on the screen.
+     * Call(uncomment) functions below can export results to a file.
+     */
+
     /* if(results_path)  free(results_path); */
     /* if(results_file)  fclose(results_file); */
     /* if(extcap_dumper) pcap_dump_close(extcap_dumper); */

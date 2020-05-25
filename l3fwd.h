@@ -199,6 +199,8 @@ int em_main_loop(__attribute__((unused)) void *dummy);
 
 int lpm_main_loop(__attribute__((unused)) void *dummy);
 int lpm_main_loop_multi_threads(__attribute__((unused)) void *dummy);
+int lpm_main_loop_capture(__attribute__((unused)) void *dummy);
+int lpm_main_loop_analyze_forward(__attribute__((unused)) void *dummy);
 
 /* Return ipv4/ipv6 fwd lookup struct for LPM or EM. */
 void *em_get_ipv4_l3fwd_lookup_struct(const int socketid);
