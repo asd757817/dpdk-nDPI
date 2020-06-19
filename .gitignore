@@ -5,4 +5,5 @@ api_test*
 *.swp
 *.sh
 *.txt
+*.pcap
 /build

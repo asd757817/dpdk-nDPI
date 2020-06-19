@@ -155,9 +155,9 @@ struct malicious_packet {
     struct malicious_packet *next;
 };
 struct dpi_results {
-    float total_time, capture_time, analyze_time, forward_time;
-    unsigned long total_rx_packets, total_tx_packets, total_bytes,
-        total_malicious;
+    float system_time, capturing_time, processing_time;
+    unsigned long capturing_packets, total_tx_packets, total_bytes,
+        nb_malicious_packets, processing_packets;
     struct malicious_packet *malicous_head;
 };
 struct dpi_results dpiresults[MAX_NUM_READER_THREADS];

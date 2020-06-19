@@ -213,7 +213,7 @@ static struct l3fwd_lkp_mode l3fwd_lpm_lkp = {
     .check_ptype = lpm_check_ptype,
     .cb_parse_ptype = lpm_cb_parse_ptype,
     /* .main_loop = lpm_main_loop, */
-    .main_loop = lpm_main_loop_multi_threads,
+    .main_loop = lpm_main_loop_capture,
     .get_ipv4_lookup_struct = lpm_get_ipv4_l3fwd_lookup_struct,
     .get_ipv6_lookup_struct = lpm_get_ipv6_l3fwd_lookup_struct,
 };
@@ -2268,14 +2268,16 @@ static void dpiresults_init()
 {
     for (int i = 0; i < MAX_NUM_READER_THREADS; i++) {
         /* Time record init */
-        dpiresults[i].total_time = 0;
-        dpiresults[i].capture_time = 0;
-        dpiresults[i].analyze_time = 0;
+        dpiresults[i].system_time = 0;
+        dpiresults[i].capturing_time = 0;
+        dpiresults[i].processing_time = 0;
+
         /* Number of packets and packets size */
-        dpiresults[i].total_rx_packets = 0;
+        dpiresults[i].capturing_packets = 0;
+        dpiresults[i].processing_packets = 0;
+        dpiresults[i].nb_malicious_packets = 0;
         dpiresults[i].total_tx_packets = 0;
         dpiresults[i].total_bytes = 0;
-        dpiresults[i].total_malicious = 0;
     }
     return;
 }

@@ -1601,11 +1601,11 @@ void printResults(u_int64_t processing_time_usec, u_int64_t setup_time_usec)
                (unsigned long) cumulative_stats.packet_len[5]);
 
         if (processing_time_usec > 0) {
-            float run_time = dpiresults[0].total_time;
+            float run_time = dpiresults[0].system_time;
             for (int i = 1; i < 3; i++) {
-                if (dpiresults[i].total_time > 0 &&
-                    dpiresults[i].total_time < run_time)
-                    run_time = dpiresults[i].total_time;
+                if (dpiresults[i].system_time > 0 &&
+                    dpiresults[i].system_time < run_time)
+                    run_time = dpiresults[i].system_time;
             }
             char buf[32], buf1[32], when[64];
 
@@ -1723,27 +1723,19 @@ void printResults(u_int64_t processing_time_usec, u_int64_t setup_time_usec)
     }
 
     /* Print time info */
-    printf("\n\nTime info:\n");
-    printf("\t%-20s%-25s%-20s%-20s\n", "lcore", "Capturer", "Analyzer",
-           "Total");
-    for (unsigned i = 0; i <= 3; i++) {
-        printf("\t%-20u%-25f%-20f%-20f\n", i,
-               dpiresults[i].capture_time / 1000000,
-               dpiresults[i].forward_time / 1000000,
-               dpiresults[i].total_time / 1000000);
-    }
-    for (unsigned i = 0; i <= 3; i++) {
-        printf("\n\tlcore_%u recieve %lu packets (%lu bytes)", i,
-               dpiresults[i].total_rx_packets, dpiresults[i].total_bytes);
-    }
-    printf("\n\t%lu %lu\n", dpiresults[0].total_rx_packets,
-           dpiresults[1].total_rx_packets);
-
-    printf("\n\t%s\n", "Processing time per packet");
-    printf("\n\t%lf %lf\n",
-           dpiresults[0].capture_time / dpiresults[0].total_rx_packets,
-           dpiresults[1].capture_time / dpiresults[1].total_rx_packets);
-
+    /* printf("\n\nTime info:\n"); */
+    /* printf("\t%-20s%-25s%-20s%-20s\n", "lcore", "Capturing", "Processing", */
+           /* "Total"); */
+    /* for (unsigned i = 1; i <= num_threads; i++) { */
+        /* printf("\t%-20u%-25f%-20f%-20f\n", i, */
+               /* dpiresults[i].capturing_time / 1000000, */
+               /* dpiresults[i].processing_time / 1000000, */
+               /* dpiresults[i].system_time / 1000000); */
+    /* } */
+    /* for (unsigned i = 1; i <= num_threads; i++) { */
+        /* printf("\n\tlcore_%u recieve %lu packets (%lu bytes)", i, */
+               /* dpiresults[i].capturing_packets, dpiresults[i].total_bytes); */
+    /* } */
 
 free_stats:
     if (scannerHosts) {

@@ -37,7 +37,17 @@
 #endif
 
 
+/*
+ * Common ring buffer between capture module and processing module.
+ * capture module -> capture the packets.
+ * processing module ->　analyze and forward/block the packets.
+ */
 struct rte_ring *msgq[2];
+
+struct msg_struct_t {
+    struct pcap_pkthdr *header;
+    const u_char *data;
+} msg_struct_t;
 
 /*
  * Define structures and functions.
@@ -427,10 +437,10 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
             /* Time record */
             gettimeofday(&capture_start, NULL);
 
-            dpiresults[lcore_id].total_rx_packets += nb_rx;
+            dpiresults[lcore_id].capturing_packets += nb_rx;
 
             gettimeofday(&analyze_start, NULL);
-            dpiresults[lcore_id].capture_time +=
+            dpiresults[lcore_id].capturing_time +=
                 (analyze_start.tv_sec - capture_start.tv_sec) * 1000000 +
                 (analyze_start.tv_usec - capture_start.tv_usec);
 
@@ -465,11 +475,7 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
             /* Time record */
             gettimeofday(&analyze_end, NULL);
 
-            dpiresults[lcore_id].analyze_time +=
-                (analyze_end.tv_sec - analyze_start.tv_sec) * 1000000 +
-                (analyze_end.tv_usec - analyze_start.tv_usec);
-
-            dpiresults[lcore_id].total_time +=
+            dpiresults[lcore_id].system_time +=
                 (analyze_end.tv_sec - capture_start.tv_sec) * 1000000 +
                 (analyze_end.tv_usec - capture_start.tv_usec);
         }
@@ -577,7 +583,7 @@ static void *capture_module(void *arguments)
 
             /* Record the time that completing a capture */
             gettimeofday(&capture_end, NULL);
-            dpiresults[common_params->lcore_id].capture_time +=
+            dpiresults[common_params->lcore_id].capturing_time +=
                 (capture_end.tv_sec - capture_start.tv_sec) * 1000000 +
                 (capture_end.tv_usec - capture_start.tv_usec);
         }
@@ -588,188 +594,6 @@ static void *capture_module(void *arguments)
 #endif
     printf("[lcore_%u] Capture module closed.\n", common_params->lcore_id);
     return NULL;
-}
-
-/*
- * forward packets from capture_module
- */
-static void *forward_packets(void *arguments)
-{
-    struct common_params_t *common_params =
-        (struct common_params_t *) arguments;
-    struct queue_ele_t *buf = malloc(sizeof(queue_ele_t));
-    struct timeval forward_start, forward_end;
-    struct rte_mbuf *pkts_burst[MAX_PKT_BURST];
-    struct lcore_conf *qconf = common_params->qconf;
-    queue_t *myqueue = common_params->q;
-
-    int ret = 0, i, nb_rx, read_count = 0;
-    uint64_t prev_tsc, cur_tsc, diff_tsc;
-    const uint64_t drain_tsc =
-        (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * BURST_TX_DRAIN_US;
-    uint16_t portid;
-    uint8_t queueid;
-#ifdef USE_PIPE
-    int *fd = common_params->fd;
-#endif
-
-    forward_start.tv_sec = 0, forward_start.tv_usec = 0;
-    forward_end.tv_sec = 0, forward_end.tv_usec = 0;
-
-    while (!force_quit) {
-        cur_tsc = rte_rdtsc();
-        /*TX burst queue drain*/
-        diff_tsc = cur_tsc - prev_tsc;
-        if (unlikely(diff_tsc > drain_tsc)) {
-            for (i = 0; i < qconf->n_tx_port; ++i) {
-                portid = qconf->tx_port_id[i];
-                if (qconf->tx_mbufs[portid].len == 0)
-                    continue;
-                send_burst(qconf, qconf->tx_mbufs[portid].len, portid);
-                qconf->tx_mbufs[portid].len = 0;
-            }
-            prev_tsc = cur_tsc;
-        }
-
-        nb_rx = rte_ring_dequeue_bulk(common_params->msgq, (void **) pkts_burst,
-                                      2, NULL);
-        if (nb_rx == 0)
-            continue;
-
-#ifdef USE_PIPE
-        ret = read(fd[0], buf, sizeof(queue_ele_t));
-#else
-        ret = MyRead(myqueue, buf);
-#endif
-        if (ret == 0) {
-            continue;
-        } else if (ret < 0)
-            break;
-
-        gettimeofday(&forward_start, NULL);
-
-        /* Forwarding packets */
-#if defined RTE_ARCH_X86 || defined RTE_MACHINE_CPUFLAG_NEON || \
-    defined RTE_ARCH_PPC_64
-        l3fwd_lpm_send_packets(nb_rx, pkts_burst, common_params->portid, qconf);
-#else
-        l3fwd_lpm_no_opt_send_packets(nb_rx, pkts_burst, common_params->portid,
-                                      qconf);
-#endif /* X86 */
-
-
-        gettimeofday(&forward_end, NULL);
-        gettimeofday(&common_params->total_end, NULL);
-
-        /* Recored total forward_time */
-        dpiresults[common_params->lcore_id].forward_time +=
-            (forward_end.tv_sec - forward_start.tv_sec) * 1000000 +
-            (forward_end.tv_usec - forward_start.tv_usec);
-    }
-
-    dpiresults[common_params->lcore_id].total_time +=
-        (common_params->total_end.tv_sec - common_params->total_start.tv_sec) *
-            1000000 +
-        (common_params->total_end.tv_usec - common_params->total_start.tv_usec);
-
-    /* Close module */
-#ifdef USE_PIPE
-    close(fd[0]);
-#endif
-    printf("[lcore_%u] forward module closed.\n", common_params->lcore_id);
-    return NULL;
-}
-
-int lpm_main_loop_multi_threads(__attribute__((unused)) void *dummy)
-{
-    int i;
-    char s[64];
-    struct common_params_t common_params;
-
-    /* Shared variables init */
-    common_params.q = queue_new();
-    common_params.lcore_id = rte_lcore_id();
-    common_params.qconf = &lcore_conf[common_params.lcore_id];
-    common_params.total_start.tv_sec = 0, common_params.total_start.tv_usec = 0;
-    common_params.total_end.tv_sec = 0, common_params.total_end.tv_usec = 0;
-
-    /* Resource create */
-    char msgq_name[20];
-    snprintf(msgq_name, sizeof(msgq_name), "msg_queue_%u",
-             common_params.lcore_id);
-
-    common_params.msgq =
-        rte_ring_create(msgq_name, 32, SOCKET_ID_ANY, RING_F_SP_ENQ);
-
-    if (common_params.msgq == NULL) {
-        rte_exit(EXIT_FAILURE, "Create msg_ring error in lcore: %u!\n",
-                 common_params.lcore_id);
-    }
-
-    /* Show info */
-    if (common_params.qconf->n_rx_queue == 0) {
-        RTE_LOG(INFO, L3FWD, "lcore %u has nothing to do\n",
-                common_params.lcore_id);
-        return 0;
-    }
-    RTE_LOG(INFO, L3FWD, "entering main loop on lcore %u\n",
-            common_params.lcore_id);
-
-    for (i = 0; i < common_params.qconf->n_rx_queue; i++) {
-        common_params.portid = common_params.qconf->rx_queue_list[i].port_id;
-        common_params.queueid = common_params.qconf->rx_queue_list[i].queue_id;
-        RTE_LOG(INFO, L3FWD, " -- lcoreid=%u portid=%u rxqueueid=%hhu\n",
-                common_params.lcore_id, common_params.portid,
-                common_params.queueid);
-    }
-
-#ifdef USE_PIPE
-    /* pipe init */
-    if (pipe(common_params.fd) < 0) {
-        fprintf(stderr, "Pipe init error.\n");
-        exit(1);
-    }
-#endif
-
-    cpu_set_t cpuset_capture, cpuset_forward;
-    pthread_t p_capture, p_forward;
-    int ret;
-
-    /* Create threads */
-    pthread_create(&p_capture, NULL, capture_module, (void *) &common_params);
-    pthread_create(&p_forward, NULL, forward_packets, (void *) &common_params);
-
-    /* Set CPU affinity */
-    bool set_affinity = true;
-    if (set_affinity) {
-        CPU_ZERO(&cpuset_capture);
-        CPU_ZERO(&cpuset_forward);
-
-        CPU_SET(common_params.lcore_id, &cpuset_capture);
-        CPU_SET(common_params.lcore_id + 2, &cpuset_forward);
-
-        ret = pthread_setaffinity_np(p_capture, sizeof(cpu_set_t),
-                                     &cpuset_capture);
-        if (ret != 0)
-            fprintf(stderr, "[lcore.%u Capture]Set affinity error.\n",
-                    common_params.lcore_id);
-
-        ret = pthread_setaffinity_np(p_forward, sizeof(cpu_set_t),
-                                     &cpuset_forward);
-        if (ret != 0)
-            fprintf(stderr, "[lcore.%u forward]Set affinity error.\n",
-                    common_params.lcore_id);
-    }
-
-    /* pthread join */
-    pthread_join(p_capture, NULL);
-    pthread_join(p_forward, NULL);
-
-    /* Exit */
-    queue_free(common_params.q);
-    rte_ring_free(common_params.msgq);
-
-    return 0;
 }
 
 /*
@@ -792,21 +616,21 @@ int lpm_main_loop_capture(__attribute__((unused)) void *dummy)
     for (int j = 0; j < 2; j++) {
         char msgq_name[20];
         snprintf(msgq_name, sizeof(msgq_name), "msg_queue_%d", j);
-        msgq[j] = rte_ring_create(msgq_name, 32, SOCKET_ID_ANY, RING_F_SP_ENQ);
 
+        msgq[j] = rte_ring_create(msgq_name, 64, SOCKET_ID_ANY, RING_F_SP_ENQ);
         if (msgq[j] == NULL) {
             rte_exit(EXIT_FAILURE, "Create msg_ring for port_%d error!\n", j);
         }
     }
 
 
-    rte_eal_mp_remote_launch(lpm_main_loop_analyze_forward, NULL, SKIP_MASTER);
+    rte_eal_mp_remote_launch(lpm_main_loop_processing, NULL, SKIP_MASTER);
 
     while (!force_quit) {
+#if 0
         RTE_LCORE_FOREACH(lcore_id)
         {
             qconf = &lcore_conf[lcore_id];
-
             for (i = 0; i < qconf->n_rx_queue; ++i) {
                 portid = qconf->rx_queue_list[i].port_id;
                 queueid = qconf->rx_queue_list[i].queue_id;
@@ -819,14 +643,37 @@ int lpm_main_loop_capture(__attribute__((unused)) void *dummy)
                 nb_enqueue = rte_ring_enqueue_bulk(
                     msgq[portid], (void **) pkts_burst, nb_rx, NULL);
 
-                dpiresults[lcore_id].total_rx_packets += nb_rx;
+                dpiresults[lcore_id].capturing_packets += nb_rx;
+
                 /* printf(
                     "[lcore_%u] Receive %d packets from port_%u and %d packets "
                     "are enqueued.\n",
                     rte_lcore_id(), nb_rx, portid, nb_enqueue); */
             }
         }
+#endif
+        char *pcapfile = "test.pcap";
+        char errbuff[PCAP_ERRBUF_SIZE];
+        struct pcap_pkthdr *header;
+        const u_char *data;
+        pcap_t *handler = pcap_open_offline(pcapfile, errbuff);
+
+        while (pcap_next_ex(handler, &header, &data) >= 0) {
+            struct msg_struct_t *msg = malloc(sizeof(struct msg_struct_t));
+            msg->header = header;
+            msg->data = data;
+
+            /* printf("Packet size: %d bytes.\n", msg->header->len); */
+
+            ret = rte_ring_enqueue(msgq[0], (void *) msg);
+            if (ret < 0) {
+                usleep(1);
+                continue;
+            }
+            nb_rx += 1;
+        }
     }
+    printf("Total pkts read is %d\n", nb_rx);
     return 0;
 }
 
@@ -836,7 +683,7 @@ int lpm_main_loop_capture(__attribute__((unused)) void *dummy)
  * This function will act as a consumer.
  * Read packets from a ring buffer then analyze and forward.
  */
-int lpm_main_loop_analyze_forward(__attribute__((unused)) void *dummy)
+int lpm_main_loop_processing(__attribute__((unused)) void *dummy)
 {
     int i, nb_enqueue, ret;
     uint8_t queueid;
@@ -853,11 +700,11 @@ int lpm_main_loop_analyze_forward(__attribute__((unused)) void *dummy)
 
 
     while (!force_quit) {
+#if 0
         ret =
             rte_ring_dequeue_bulk(msgq[portid], (void **) pkts_burst, 3, NULL);
         if (ret > 0) {
-            /* printf("[lcore_%u]: Dequeue %d packets\n", lcore_id, ret); */
-
+            /* printf("[lcore_%u]: dequeue %d packets\n", lcore_id, ret); */
             for (i = 0; i < 3; i++) {
                 char *data = rte_pktmbuf_mtod(pkts_burst[i], char *);
                 int pkt_len = rte_pktmbuf_pkt_len(pkts_burst[i]);
@@ -887,7 +734,20 @@ int lpm_main_loop_analyze_forward(__attribute__((unused)) void *dummy)
             l3fwd_lpm_send_packets(1, pkts_burst, portid, qconf);
         } else
             continue;
+#endif
+
+        void *buf;
+        if (rte_ring_dequeue(msgq[0], &buf) < 0) {
+            usleep(5);
+            continue;
+        }
+        struct msg_struct_t *msg = (struct msg_struct_t *) buf;
+        /* printf("[lcore_%u] Read packet with size %d bytes.\n", lcore_id,
+               msg->header->len); */
+        ndpi_process_packet(lcore_id - 1, msg->header,
+                            (const u_char *) msg->data);
     }
+    printf("[lcore_%u] Processing module closed.\n", lcore_id);
     return 0;
 }
 
