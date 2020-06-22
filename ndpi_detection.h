@@ -160,7 +160,7 @@ struct dpi_results {
         nb_malicious_packets, processing_packets;
     struct malicious_packet *malicous_head;
 };
-struct dpi_results dpiresults[MAX_NUM_READER_THREADS];
+struct dpi_results dpiresults[16];
 
 
 /* Functions declaration */

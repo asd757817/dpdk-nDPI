@@ -42,11 +42,11 @@
  * capture module -> capture the packets.
  * processing module ->　analyze and forward/block the packets.
  */
-struct rte_ring *msgq[2];
+struct rte_ring *msgq[16];
 
 struct msg_struct_t {
     struct pcap_pkthdr *header;
-    const u_char *data;
+    u_char *data;
 } msg_struct_t;
 
 /*
@@ -244,8 +244,8 @@ struct ipv6_l3fwd_lpm_route {
 
 /* Setup route table */
 static struct ipv4_l3fwd_lpm_route ipv4_l3fwd_lpm_route_array[] = {
-    {IPv4(192, 168, 1, 0), 24, 0}, {IPv4(192, 168, 2, 0), 24, 1},
-    {IPv4(192, 168, 3, 0), 24, 2}, {IPv4(4, 1, 1, 0), 24, 3},
+    {IPv4(192, 168, 2, 1), 24, 0}, {IPv4(192, 168, 1, 1), 24, 1},
+    {IPv4(3, 1, 1, 0), 24, 2},     {IPv4(4, 1, 1, 0), 24, 3},
     {IPv4(5, 1, 1, 0), 24, 4},     {IPv4(6, 1, 1, 0), 24, 5},
     {IPv4(7, 1, 1, 0), 24, 6},     {IPv4(8, 1, 1, 0), 24, 7},
 };
@@ -375,12 +375,11 @@ lpm_get_dst_port_with_ipv4(const struct lcore_conf *qconf,
 #include "l3fwd_lpm.h"
 #endif
 
-/* main processing loop */
+/* main loop. Capturing and processing */
 int lpm_main_loop(__attribute__((unused)) void *dummy)
 {
     struct rte_mbuf *pkts_burst[MAX_PKT_BURST];
     unsigned lcore_id;
-    uint64_t prev_tsc, diff_tsc, cur_tsc;
     int i, nb_rx;
     uint16_t portid;
     uint8_t queueid;
@@ -388,6 +387,7 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
     struct timeval total_start = {0, 0}, total_end = {0, 0},
                    capture_start = {0, 0}, analyze_start = {0, 0}, analyze_end;
 
+    uint64_t prev_tsc, diff_tsc, cur_tsc;
     const uint64_t drain_tsc =
         (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * BURST_TX_DRAIN_US;
 
@@ -423,6 +423,7 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
 
             prev_tsc = cur_tsc;
         }
+
 
         /* Read packet from RX queues */
         for (i = 0; i < qconf->n_rx_queue; ++i) {
@@ -460,8 +461,7 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
                     gettimeofday(&total_start, NULL);
 
                 /* Call the function to process the packets */
-                ndpi_process_packet((u_char *) &lcore_id, &h,
-                                    (const u_char *) data);
+                ndpi_process_packet(lcore_id, &h, (const u_char *) data);
             }
 
             /* Forwarding */
@@ -485,118 +485,6 @@ int lpm_main_loop(__attribute__((unused)) void *dummy)
 }
 
 /*
- * Capture the packets and write them into a queue.
- */
-static void *capture_module(void *arguments)
-{
-    struct common_params_t *common_params =
-        (struct common_params_t *) arguments;
-    struct queue_ele_t buf;
-    struct rte_mbuf *pkts_burst[MAX_PKT_BURST],
-        *recv_buff[MAX_PKT_BURST];  // buffer for packets
-    struct timeval capture_start = {0, 0}, capture_end = {0, 0};
-    struct lcore_conf *qconf = common_params->qconf;
-    queue_t *myqueue = common_params->q;
-
-    int i, ret, nb_rx;
-    uint16_t portid;
-    uint8_t queueid;
-
-#ifdef USE_PIPE
-    int *fd = common_params->fd;
-#endif
-
-    while (!force_quit) {
-        /* Read packet from RX queues */
-        for (i = 0; i < qconf->n_rx_queue; ++i) {
-            portid = qconf->rx_queue_list[i].port_id;
-            queueid = qconf->rx_queue_list[i].queue_id;
-            nb_rx =
-                rte_eth_rx_burst(portid, queueid, pkts_burst, MAX_PKT_BURST);
-
-            if (unlikely(nb_rx == 0))
-                continue;
-
-            /* Record the time that capturing packets */
-            if (common_params->total_start.tv_sec == 0) {
-                gettimeofday(&common_params->total_start, NULL);
-            }
-            gettimeofday(&capture_start, NULL);
-
-            /* Examine each packet */
-            for (i = 0; i < nb_rx; i++) {
-                char *data = rte_pktmbuf_mtod(pkts_burst[i], char *);
-                int pkt_len = rte_pktmbuf_pkt_len(pkts_burst[i]);
-                dpiresults[common_params->lcore_id].total_bytes += pkt_len;
-
-                struct pcap_pkthdr h;
-                h.len = h.caplen = pkt_len;
-                gettimeofday(&h.ts, NULL);
-
-                /*
-                 * Call the function to process the packet.
-                 * Processing a packet at one time. This won't reassemble
-                 * packets. Each packet is independent for this function. And
-                 * this function only deal with header and payload checking to
-                 * judge the protocol and application.
-                 *
-                 * No forward functions here (Maybe it can intergrate l3fwd in
-                 * the future).
-                 */
-                ndpi_process_packet((u_char *) &common_params->lcore_id, &h,
-                                    (const u_char *) data);
-                /*
-                 * Here is some conditions to be considered ...
-                 *   1. Send packet right after processing a packet.
-                 *   2. Send multiple packets at once.
-                 *
-                 * Condition 1. will release the object in mempool after
-                 * processing completed. It can reduce the probability of
-                 * mempool being full, but that might not be very efficent.
-                 * -> Use l3fwd_lpm_simple_forward().
-                 *
-                 * Condition 2. will send multiple packets at one time. And it
-                 * can process at most 3 packets at one step. But a packet may
-                 * be blocked by the later packet if the later packet take a
-                 * long processing time. This might increase the probability of
-                 * mempool being full and it wll results in pakcet loss.
-                 * -> Use l3fwd_lpm_send_packets().
-                 */
-            }
-
-            /* Copy informations to buf and insert buf into queue */
-            buf.nb_rx = nb_rx;
-            buf.start = capture_start;
-            rte_memcpy(buf.pkts_burst, pkts_burst, sizeof(pkts_burst));
-
-            /* #ifdef USE_PIPE
-                        ret = write(fd[1], &buf, sizeof(buf));
-            #else
-                        ret = MyWrite(myqueue, &buf);
-            #endif
-                        if (ret < 0)
-                            continue;
-             */
-            if (rte_ring_enqueue_bulk(common_params->msgq, (void **) pkts_burst,
-                                      nb_rx, NULL) == 0)
-                continue;
-
-            /* Record the time that completing a capture */
-            gettimeofday(&capture_end, NULL);
-            dpiresults[common_params->lcore_id].capturing_time +=
-                (capture_end.tv_sec - capture_start.tv_sec) * 1000000 +
-                (capture_end.tv_usec - capture_start.tv_usec);
-        }
-    }
-    /* Close module */
-#ifdef USE_PIPE
-    close(fd[1]);
-#endif
-    printf("[lcore_%u] Capture module closed.\n", common_params->lcore_id);
-    return NULL;
-}
-
-/*
  * This function will be called by master lcore.
  * This function will act as a producer.
  * Call rx_burst to get packets and write to a ring buffer.
@@ -609,11 +497,16 @@ int lpm_main_loop_capture(__attribute__((unused)) void *dummy)
     unsigned lcore_id;
     struct lcore_conf *qconf;
     struct rte_mbuf *pkts_burst[MAX_PKT_BURST], *tmp[MAX_PKT_BURST];
+    struct timeval start = {0, 0}, end = {0, 0};
+    uint64_t prev_tsc, diff_tsc, cur_tsc;
+    const uint64_t drain_tsc =
+        (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * BURST_TX_DRAIN_US;
+
 
     RTE_LOG(INFO, L3FWD, "entering caputure module on lcore %u\n",
             rte_lcore_id());
 
-    for (int j = 0; j < 2; j++) {
+    for (int j = 0; j < 16; j++) {
         char msgq_name[20];
         snprintf(msgq_name, sizeof(msgq_name), "msg_queue_%d", j);
 
@@ -625,12 +518,19 @@ int lpm_main_loop_capture(__attribute__((unused)) void *dummy)
 
 
     rte_eal_mp_remote_launch(lpm_main_loop_processing, NULL, SKIP_MASTER);
-
     while (!force_quit) {
-#if 0
         RTE_LCORE_FOREACH(lcore_id)
         {
             qconf = &lcore_conf[lcore_id];
+
+            for (i = 0; i < qconf->n_tx_port; ++i) {
+                portid = qconf->tx_port_id[i];
+                if (qconf->tx_mbufs[portid].len == 0)
+                    continue;
+                send_burst(qconf, qconf->tx_mbufs[portid].len, portid);
+                qconf->tx_mbufs[portid].len = 0;
+            }
+
             for (i = 0; i < qconf->n_rx_queue; ++i) {
                 portid = qconf->rx_queue_list[i].port_id;
                 queueid = qconf->rx_queue_list[i].queue_id;
@@ -640,43 +540,67 @@ int lpm_main_loop_capture(__attribute__((unused)) void *dummy)
                 if (unlikely(nb_rx == 0))
                     continue;
 
-                nb_enqueue = rte_ring_enqueue_bulk(
-                    msgq[portid], (void **) pkts_burst, nb_rx, NULL);
+                nb_enqueue = rte_ring_enqueue_burst(
+                    msgq[0], (void **) pkts_burst, nb_rx, NULL);
 
                 dpiresults[lcore_id].capturing_packets += nb_rx;
-
-                /* printf(
-                    "[lcore_%u] Receive %d packets from port_%u and %d packets "
-                    "are enqueued.\n",
-                    rte_lcore_id(), nb_rx, portid, nb_enqueue); */
             }
         }
+#ifdef read_pcap
+        gettimeofday(&start, NULL);
+        int repeats = 100;
+        for (int i = 0; i < repeats; i++) {
+            int ret, nb_read = 0;
+            char *pcapfile = "sqlmap.pcap";
+            char errbuff[PCAP_ERRBUF_SIZE];
+            struct pcap_pkthdr *header;
+            struct msg_struct_t *pkts[32];
+            const u_char *data;
+            pcap_t *handler = pcap_open_offline(pcapfile, errbuff);
+
+            while (pcap_next_ex(handler, &header, &data) >= 0) {
+                struct msg_struct_t *msg = malloc(sizeof(struct msg_struct_t));
+                msg->header = malloc(sizeof(struct pcap_pkthdr));
+                msg->data = malloc(sizeof(u_char) * header->caplen);
+
+                rte_memcpy(msg->header, header, sizeof(struct pcap_pkthdr));
+                rte_memcpy(msg->data, data, sizeof(u_char) * header->caplen);
+                pkts[nb_read] = msg;
+                nb_read++;
+
+                /*
+                 * Try to enqueue.
+                 * If enqueing failed -> read the next packets.
+                 * If the pkts array is full -> keep enqueing.
+                 */
+                do {
+                    ret = rte_ring_enqueue_bulk(msgq[0], (void **) pkts,
+                                                nb_read, NULL);
+                } while (ret == 0 && nb_read == MAX_PKT_BURST);
+                if (ret > 0) {
+                    /* printf("[Capturing] Enqueued %d packets.\n", ret); */
+                    dpiresults[0].capturing_packets += nb_read;
+                    nb_read = 0;
+                }
+            }
+        }
+        break;
 #endif
-        char *pcapfile = "test.pcap";
-        char errbuff[PCAP_ERRBUF_SIZE];
-        struct pcap_pkthdr *header;
-        const u_char *data;
-        pcap_t *handler = pcap_open_offline(pcapfile, errbuff);
-
-        while (pcap_next_ex(handler, &header, &data) >= 0) {
-            struct msg_struct_t *msg = malloc(sizeof(struct msg_struct_t));
-            msg->header = header;
-            msg->data = data;
-
-            /* printf("Packet size: %d bytes.\n", msg->header->len); */
-
-            ret = rte_ring_enqueue(msgq[0], (void *) msg);
-            if (ret < 0) {
-                usleep(1);
-                continue;
-            }
-            nb_rx += 1;
-        }
     }
-    printf("Total pkts read is %d\n", nb_rx);
+    gettimeofday(&end, NULL);
+
+    dpiresults[rte_lcore_id()].capturing_time =
+        (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_usec - start.tv_usec);
+
+    printf("[lcore_%u] Capturing module closed.\n", rte_lcore_id());
+    /* Wait for processing modules */
+    RTE_LCORE_FOREACH_SLAVE(lcore_id)
+    {
+        if (rte_eal_wait_lcore(lcore_id) < 0)
+            break;
+    }
     return 0;
 }
-
 
 /*
  * This function will be called by slave lcores.
@@ -685,68 +609,77 @@ int lpm_main_loop_capture(__attribute__((unused)) void *dummy)
  */
 int lpm_main_loop_processing(__attribute__((unused)) void *dummy)
 {
-    int i, nb_enqueue, ret;
-    uint8_t queueid;
+    int i, ret, dequeue_num = 16, read_fail = 0;
     uint16_t portid;
-    unsigned lcore_id;
+    unsigned lcore_id, msgqid;
     struct lcore_conf *qconf;
     struct rte_mbuf *pkts_burst[MAX_PKT_BURST];
+    struct timeval start = {0, 0}, end = {0, 0}, p_start = {0, 0},
+                   p_end = {0, 0};
 
     lcore_id = rte_lcore_id();
     qconf = &lcore_conf[lcore_id];
     portid = qconf->rx_queue_list[0].port_id;
 
-    unsigned tmp = 0;
+    RTE_LOG(INFO, L3FWD, "entering processing module on lcore %u\n",
+            rte_lcore_id());
 
-
+    gettimeofday(&start, NULL);
     while (!force_quit) {
-#if 0
-        ret =
-            rte_ring_dequeue_bulk(msgq[portid], (void **) pkts_burst, 3, NULL);
-        if (ret > 0) {
-            /* printf("[lcore_%u]: dequeue %d packets\n", lcore_id, ret); */
-            for (i = 0; i < 3; i++) {
+#ifdef read_pcap
+        void *buff[32];
+        ret = rte_ring_dequeue_burst(msgq[0], buff, MAX_PKT_BURST, NULL);
+        if (ret == 0) {
+            usleep(10);
+            continue;
+        } else {
+            gettimeofday(&p_start, NULL);
+            /* printf("[Processing_%u] Dequeued %d packets.\n", lcore_id, ret);
+             */
+            dpiresults[lcore_id].processing_packets += ret;
+            for (i = 0; i < ret; i++) {
+                struct msg_struct_t *msg = (struct msg_struct_t *) buff[i];
+
+
+                ndpi_process_packet(lcore_id - 1, msg->header, msg->data);
+                free(msg->header);
+                free(msg->data);
+                free(msg);
+            }
+
+            gettimeofday(&p_end, NULL);
+            gettimeofday(&end, NULL);
+
+            dpiresults[lcore_id].processing_time +=
+                (p_end.tv_sec - p_start.tv_sec) * 1000000 +
+                (p_end.tv_usec - p_start.tv_usec);
+        }
+#else
+        ret = rte_ring_dequeue_burst(msgq[0], (void **) pkts_burst, dequeue_num,
+                                     NULL);
+        if (ret == 0)
+            continue;
+        else {
+            /* printf("[Processing_%u] Dequeue %d packets from ring.\n",
+               lcore_id, ret); */
+            for (i = 0; i < ret; i++) {
+                struct pcap_pkthdr h;
                 char *data = rte_pktmbuf_mtod(pkts_burst[i], char *);
                 int pkt_len = rte_pktmbuf_pkt_len(pkts_burst[i]);
-                dpiresults[lcore_id].total_bytes += pkt_len;
 
-                struct pcap_pkthdr h;
+                dpiresults[lcore_id].total_bytes += pkt_len;
                 h.len = h.caplen = pkt_len;
                 gettimeofday(&h.ts, NULL);
 
                 ndpi_process_packet(lcore_id - 1, &h, (const u_char *) data);
             }
-
-            l3fwd_lpm_send_packets(3, pkts_burst, portid, qconf);
-        } else if (rte_ring_dequeue(msgq[portid], (void **) pkts_burst) == 0) {
-            /* printf("[lcore_%u]: Dequeue 1 pakcet\n", lcore_id); */
-
-            char *data = rte_pktmbuf_mtod(pkts_burst[0], char *);
-            int pkt_len = rte_pktmbuf_pkt_len(pkts_burst[0]);
-            dpiresults[lcore_id].total_bytes += pkt_len;
-
-            struct pcap_pkthdr h;
-            h.len = h.caplen = pkt_len;
-            gettimeofday(&h.ts, NULL);
-
-            ndpi_process_packet(lcore_id - 1, &h, (const u_char *) data);
-
-            l3fwd_lpm_send_packets(1, pkts_burst, portid, qconf);
-        } else
-            continue;
-#endif
-
-        void *buf;
-        if (rte_ring_dequeue(msgq[0], &buf) < 0) {
-            usleep(5);
-            continue;
+            l3fwd_lpm_send_packets(ret, pkts_burst, portid, qconf);
         }
-        struct msg_struct_t *msg = (struct msg_struct_t *) buf;
-        /* printf("[lcore_%u] Read packet with size %d bytes.\n", lcore_id,
-               msg->header->len); */
-        ndpi_process_packet(lcore_id - 1, msg->header,
-                            (const u_char *) msg->data);
+#endif
     }
+    dpiresults[lcore_id].system_time +=
+        (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_usec - start.tv_usec);
+
     printf("[lcore_%u] Processing module closed.\n", lcore_id);
     return 0;
 }

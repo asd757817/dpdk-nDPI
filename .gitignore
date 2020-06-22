@@ -7,3 +7,4 @@ api_test*
 *.txt
 *.pcap
 /build
+/rules

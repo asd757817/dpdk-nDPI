@@ -84,8 +84,7 @@ void ndpi_process_packet(u_int16_t lcore_id,
 
     /* allocate an exact size buffer to check overflows */
     uint8_t *packet_checked = malloc(header->caplen);
-    memcpy(packet_checked, packet, header->caplen);
-
+    rte_memcpy(packet_checked, packet, header->caplen);
 
     p = ndpi_workflow_process_packet(ndpi_thread_info[thread_id].workflow,
                                      header, packet_checked);
@@ -192,6 +191,7 @@ void ndpi_process_packet(u_int16_t lcore_id,
         /* getchar(); */
     }
     free(packet_checked);
+
 
     if ((pcap_end.tv_sec - pcap_start.tv_sec) > pcap_analysis_duration) {
         int i;
@@ -1484,6 +1484,7 @@ void printResults(u_int64_t processing_time_usec, u_int64_t setup_time_usec)
                     port_stats_walker, &thread_id);
         }
 
+
         /* Stats aggregation */
         cumulative_stats.guessed_flow_protocols +=
             ndpi_thread_info[thread_id].workflow->stats.guessed_flow_protocols;
@@ -1609,16 +1610,16 @@ void printResults(u_int64_t processing_time_usec, u_int64_t setup_time_usec)
             }
             char buf[32], buf1[32], when[64];
 
-            /* float t = (float) (cumulative_stats.ip_packet_count * 1000000) /
+            float t = (float) (cumulative_stats.ip_packet_count * 1000000) /
                       (float) processing_time_usec;
             float b =
                 (float) (cumulative_stats.total_wire_bytes * 8 * 1000000) /
-                (float) processing_time_usec; */
-            float t =
+                (float) processing_time_usec;
+            /* float t =
                 (float) (cumulative_stats.ip_packet_count * 1000000) / run_time;
             float b =
                 (float) (cumulative_stats.total_wire_bytes * 8 * 1000000) /
-                run_time;
+                run_time; */
 
             float traffic_duration;
 
@@ -1629,6 +1630,7 @@ void printResults(u_int64_t processing_time_usec, u_int64_t setup_time_usec)
                     (pcap_end.tv_sec * 1000000 + pcap_end.tv_usec) -
                     (pcap_start.tv_sec * 1000000 + pcap_start.tv_usec);
 
+            printf("\tProcessing time:       %ld usec\n", processing_time_usec);
             printf("\tnDPI throughput:       %s pps / %s/sec\n",
                    formatPackets(t, buf), formatTraffic(b, 1, buf1));
             t = (float) (cumulative_stats.ip_packet_count * 1000000) /
@@ -1655,6 +1657,7 @@ void printResults(u_int64_t processing_time_usec, u_int64_t setup_time_usec)
 
     if (!quiet_mode)
         printf("\n\nDetected protocols:\n");
+
     for (i = 0; i <= ndpi_get_num_supported_protocols(
                          ndpi_thread_info[0].workflow->ndpi_struct);
          i++) {
@@ -1723,19 +1726,20 @@ void printResults(u_int64_t processing_time_usec, u_int64_t setup_time_usec)
     }
 
     /* Print time info */
-    /* printf("\n\nTime info:\n"); */
-    /* printf("\t%-20s%-25s%-20s%-20s\n", "lcore", "Capturing", "Processing", */
-           /* "Total"); */
-    /* for (unsigned i = 1; i <= num_threads; i++) { */
-        /* printf("\t%-20u%-25f%-20f%-20f\n", i, */
-               /* dpiresults[i].capturing_time / 1000000, */
-               /* dpiresults[i].processing_time / 1000000, */
-               /* dpiresults[i].system_time / 1000000); */
-    /* } */
-    /* for (unsigned i = 1; i <= num_threads; i++) { */
-        /* printf("\n\tlcore_%u recieve %lu packets (%lu bytes)", i, */
-               /* dpiresults[i].capturing_packets, dpiresults[i].total_bytes); */
-    /* } */
+    printf("\n\nTime info:\n");
+    printf("\t%-20s%-25s%-20s%-20s\n", "lcore", "Capturing", "Processing",
+           "Total");
+    for (unsigned i = 0; i < num_threads; i++) {
+        printf("\t%-20u%-25f%-20f%-20f\n", i,
+               dpiresults[i].capturing_time / 1000000,
+               dpiresults[i].processing_time / 1000000,
+               dpiresults[i].system_time / 1000000);
+    }
+
+    for (unsigned i = 0; i < num_threads; i++) {
+        printf("\n\tlcore_%u processed %lu packets.\n", i,
+               dpiresults[i].processing_packets);
+    }
 
 free_stats:
     if (scannerHosts) {

@@ -212,8 +212,7 @@ static struct l3fwd_lkp_mode l3fwd_lpm_lkp = {
     .setup = setup_lpm,
     .check_ptype = lpm_check_ptype,
     .cb_parse_ptype = lpm_cb_parse_ptype,
-    /* .main_loop = lpm_main_loop, */
-    .main_loop = lpm_main_loop_capture,
+    .main_loop = lpm_main_loop,
     .get_ipv4_lookup_struct = lpm_get_ipv4_l3fwd_lookup_struct,
     .get_ipv6_lookup_struct = lpm_get_ipv6_l3fwd_lookup_struct,
 };
@@ -1929,6 +1928,8 @@ pcap_loop:
 /* Create threads, Start to capture, analyze and transfer packets */
 void run_IPS()
 {
+    long thread_id;  // This is not real thead_id, is an id to find the
+                     // thread_info entry
     u_int64_t processing_time_usec, setup_time_usec;
 #ifdef USE_DPDK
     uint16_t portid;
@@ -1936,10 +1937,8 @@ void run_IPS()
     int nb_ports = rte_eth_dev_count_avail();
 
     /* Setup Detection model */
-    for (portid = 0; portid < nb_ports; portid++) {
-        pcap_t *cap;
-        cap = openPcapFileOrDevice(portid, (const u_char *) _pcap_file[portid]);
-        setupDetection(portid, cap);
+    for (thread_id = 0; thread_id < num_threads; thread_id++) {
+        setupDetection(thread_id, NULL);
     }
 
     /* program startup time */
@@ -1947,9 +1946,9 @@ void run_IPS()
 
 #ifdef USE_SYSTEM2
     /* Launch per-lcore init on every lcore */
+    printf("Launch capturing and processing modules...\n");
     lpm_main_loop_capture(NULL);
 #else
-    /* Launch per-lcore init on every lcore */
     rte_eal_mp_remote_launch(l3fwd_lkp.main_loop, NULL, CALL_MASTER);
     RTE_LCORE_FOREACH_SLAVE(lcore_id)
     {
@@ -1958,6 +1957,7 @@ void run_IPS()
         }
     }
 #endif
+
     /* Stop ports */
     RTE_ETH_FOREACH_DEV(portid)
     {
@@ -1984,9 +1984,6 @@ void run_IPS()
 
     /* pcap close */
     for (portid = 0; portid < nb_ports; portid++) {
-        if (ndpi_thread_info[portid].workflow->pcap_handle != NULL)
-            pcap_close(ndpi_thread_info[portid].workflow->pcap_handle);
-
         terminateDetection(portid);
     }
 #else
@@ -2264,9 +2261,9 @@ void bpf_filter_port_array_add(int filter_array[], int size, int port)
     exit(-1);
 }
 
-static void dpiresults_init()
+static void dpiresults_init(int n)
 {
-    for (int i = 0; i < MAX_NUM_READER_THREADS; i++) {
+    for (int i = 0; i < n; i++) {
         /* Time record init */
         dpiresults[i].system_time = 0;
         dpiresults[i].capturing_time = 0;
@@ -2298,7 +2295,6 @@ int main(int argc, char **argv)
     serializerUnitTest();
     analyzeUnitTest();
     pattern_search_module_init();
-    dpiresults_init();
 
     /* Record time */
     gettimeofday(&startup_time, NULL);
@@ -2311,6 +2307,9 @@ int main(int argc, char **argv)
 
     /* Parse input options*/
     parseOptions(argc, argv);
+
+    dpiresults_init(num_threads);
+
     if (!quiet_mode) {
         printf(
             "\n-----------------------------------------------------------\n"

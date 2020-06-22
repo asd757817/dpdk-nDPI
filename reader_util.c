@@ -762,7 +762,6 @@ static struct ndpi_flow_info *get_ndpi_flow_info(
         if ((iph->ihl * 4) > ipsize || ipsize < ntohs(iph->tot_len)
             /* || (iph->frag_off & htons(0x1FFF)) != 0 */)
             return NULL;
-
         l4_offset = iph->ihl * 4;
         l3 = (const u_int8_t *) iph;
     } else {
@@ -1567,11 +1566,16 @@ static struct ndpi_proto packet_processing(struct ndpi_workflow *workflow,
 
     u_int8_t payload_copy[500];
     if (!flow->is_malicious && payload_len > 50) {
-        strncpy(payload_copy, payload + 50, 500);
+        /* strncpy(payload_copy, payload + 50, 500); */
+        /* if (pcre_search(proto, flow->detected_protocol.app_protocol, sport,
+                        dport, payload_copy)) */
         if (pcre_search(proto, flow->detected_protocol.app_protocol, sport,
-                        dport, payload_copy))
+                        dport, payload))
             flow->is_malicious += 1;
     }
+
+    /* if (pcre_search(proto, flow->detected_protocol.app_protocol, sport,
+       dport, payload)) flow->is_malicious += 1; */
 
     /*
      * If is_malicious != 0 -> block or do something.
