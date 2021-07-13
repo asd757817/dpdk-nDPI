@@ -1,4 +1,4 @@
-## Modified the nDPI example to support l3fwd with DPDK.
+## Modified the nDPI example to support l3fwd with DPDK 18.11.2
 
 ``` shell
 export RTE_SDK=$(dpdk dir)
