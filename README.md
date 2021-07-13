@@ -3,7 +3,7 @@
 ``` shell
 export RTE_SDK=$(dpdk dir)
 export RTE_TARGET=x86_64-native-linuxapp-gcc
-export nDPI_src=(nDPI dir)
+export nDPI_src=$(nDPI dir)
 
 make
 sudo ./build/nDPIexe -c 0xf -n4 -- -L -p 0x3 --config="(0,0,0),(1,0,1)" --parse-ptype --eth-dest=0,68:b5:99:b6:d3:5d --eth-dest=1,b4:96:91:65:62:ab -- n4
