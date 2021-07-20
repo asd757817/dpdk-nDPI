@@ -1,5 +1,7 @@
 ## Modified the nDPI example to support l3fwd with DPDK 18.11.2
 
+This project has not been maintained for a while.
+
 ``` shell
 export RTE_SDK=$(dpdk dir)
 export RTE_TARGET=x86_64-native-linuxapp-gcc
